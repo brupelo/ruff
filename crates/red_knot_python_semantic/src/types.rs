@@ -303,7 +303,7 @@ fn bindings_ty<'db>(
         |BindingWithConstraints {
              binding,
              constraints,
-             visibility_constraints,
+             visibility_constraint: visibility_constraints,
          }| {
             // dbg!("====");
             let result = StaticTruthiness::analyze(db, visibility_constraints);

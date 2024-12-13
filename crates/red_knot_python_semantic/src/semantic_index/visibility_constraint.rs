@@ -1,3 +1,7 @@
+use ruff_index::IndexVec;
+
+use crate::semantic_index::use_def::ScopedConstraintId;
+
 use super::constraint::Constraint;
 
 /// TODO
@@ -24,7 +28,48 @@ use super::constraint::Constraint;
 /// else:
 ///    d = 1  # Constraint(~test1)
 /// ```
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum VisibilityConstraintRef {
+    None,
+    Single(ScopedConstraintId),
+    And(Box<VisibilityConstraintRef>, Box<VisibilityConstraintRef>),
+    Or(Box<VisibilityConstraintRef>, Box<VisibilityConstraintRef>),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum VisibilityConstraint<'db> {
-    Constraint(Constraint<'db>),
+    None,
+    Single(Constraint<'db>),
+    And(
+        Box<VisibilityConstraint<'db>>,
+        Box<VisibilityConstraint<'db>>,
+    ),
+    Or(
+        Box<VisibilityConstraint<'db>>,
+        Box<VisibilityConstraint<'db>>,
+    ),
+}
+
+impl<'db> VisibilityConstraint<'db> {
+    pub(crate) fn from_ref(
+        all_constraints: &IndexVec<ScopedConstraintId, Constraint<'db>>,
+        visibility_constraint_ref: &VisibilityConstraintRef,
+    ) -> VisibilityConstraint<'db> {
+        match visibility_constraint_ref {
+            VisibilityConstraintRef::None => VisibilityConstraint::None,
+            VisibilityConstraintRef::Single(id) => {
+                VisibilityConstraint::Single(all_constraints[*id])
+            }
+            VisibilityConstraintRef::And(left, right) => {
+                let left = Self::from_ref(all_constraints, left);
+                let right = Self::from_ref(all_constraints, right);
+                VisibilityConstraint::And(Box::new(left), Box::new(right))
+            }
+            VisibilityConstraintRef::Or(left, right) => {
+                let left = Self::from_ref(all_constraints, left);
+                let right = Self::from_ref(all_constraints, right);
+                VisibilityConstraint::Or(Box::new(left), Box::new(right))
+            }
+        }
+    }
 }

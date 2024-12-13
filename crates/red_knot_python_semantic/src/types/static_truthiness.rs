@@ -2,7 +2,6 @@ use crate::semantic_index::{
     ast_ids::HasScopedExpressionId,
     constraint::{Constraint, ConstraintNode, PatternConstraintKind},
     visibility_constraint::VisibilityConstraint,
-    VisibilityConstraintIterator,
 };
 use crate::types::{infer_expression_types, Truthiness};
 use crate::Db;
@@ -41,7 +40,7 @@ impl StaticTruthiness {
     /// Analyze the (statically known) truthiness for a list of visibility constraints.
     pub(crate) fn analyze<'db>(
         db: &'db dyn Db,
-        visibility_constraints: VisibilityConstraintIterator<'_, 'db>,
+        visibility_constraint: VisibilityConstraint,
     ) -> Self {
         let mut result = Self {
             any_always_false: false,
@@ -49,57 +48,56 @@ impl StaticTruthiness {
             at_least_one_constraint: false,
         };
 
-        for constraint in visibility_constraints {
-            // dbg!(constraint);
-            let truthiness = match constraint {
-                VisibilityConstraint::Constraint(Constraint {
-                    node: ConstraintNode::Expression(test_expr),
-                    is_positive,
-                }) => {
-                    let inference = infer_expression_types(db, test_expr);
-                    let scope = test_expr.scope(db);
-                    let ty = inference
-                        .expression_ty(test_expr.node_ref(db).scoped_expression_id(db, scope));
+        let truthiness = match visibility_constraint {
+            VisibilityConstraint::Single(Constraint {
+                node: ConstraintNode::Expression(test_expr),
+                is_positive,
+            }) => {
+                let inference = infer_expression_types(db, test_expr);
+                let scope = test_expr.scope(db);
+                let ty =
+                    inference.expression_ty(test_expr.node_ref(db).scoped_expression_id(db, scope));
 
-                    ty.bool(db).negate_if(!is_positive)
-                }
-                VisibilityConstraint::Constraint(Constraint {
-                    node: ConstraintNode::Pattern(inner),
-                    ..
-                }) => match inner.kind(db) {
-                    PatternConstraintKind::Value(value) => {
-                        let subject_expression = inner.subject(db);
-                        let inference = infer_expression_types(db, *subject_expression);
-                        let scope = subject_expression.scope(db);
-                        let subject_ty = inference.expression_ty(
-                            subject_expression
-                                .node_ref(db)
-                                .scoped_expression_id(db, scope),
-                        );
+                ty.bool(db).negate_if(!is_positive)
+            }
+            VisibilityConstraint::Single(Constraint {
+                node: ConstraintNode::Pattern(inner),
+                ..
+            }) => match inner.kind(db) {
+                PatternConstraintKind::Value(value) => {
+                    let subject_expression = inner.subject(db);
+                    let inference = infer_expression_types(db, *subject_expression);
+                    let scope = subject_expression.scope(db);
+                    let subject_ty = inference.expression_ty(
+                        subject_expression
+                            .node_ref(db)
+                            .scoped_expression_id(db, scope),
+                    );
 
-                        let inference = infer_expression_types(db, *value);
-                        let scope = value.scope(db);
-                        let value_ty = inference
-                            .expression_ty(value.node_ref(db).scoped_expression_id(db, scope));
+                    let inference = infer_expression_types(db, *value);
+                    let scope = value.scope(db);
+                    let value_ty =
+                        inference.expression_ty(value.node_ref(db).scoped_expression_id(db, scope));
 
-                        if subject_ty.is_single_valued(db) {
-                            Truthiness::from(subject_ty.is_equivalent_to(db, value_ty))
-                        } else {
-                            Truthiness::Ambiguous
-                        }
-                    }
-                    PatternConstraintKind::Singleton(_) | PatternConstraintKind::Unsupported => {
+                    if subject_ty.is_single_valued(db) {
+                        Truthiness::from(subject_ty.is_equivalent_to(db, value_ty))
+                    } else {
                         Truthiness::Ambiguous
                     }
-                },
-            };
+                }
+                PatternConstraintKind::Singleton(_) | PatternConstraintKind::Unsupported => {
+                    Truthiness::Ambiguous
+                }
+            },
+            _ => Truthiness::Ambiguous,
+        };
 
-            // dbg!(truthiness);
+        // dbg!(truthiness);
 
-            result.any_always_false |= truthiness.is_always_false();
-            result.all_always_true &= truthiness.is_always_true();
-            result.at_least_one_constraint = true;
-        }
+        // result.any_always_false |= truthiness.is_always_false();
+        // result.all_always_true &= truthiness.is_always_true();
+        // result.at_least_one_constraint = true;
+        // }
 
         result
     }

@@ -30,7 +30,6 @@ pub(crate) mod visibility_constraint;
 
 pub(crate) use self::use_def::{
     BindingWithConstraints, BindingWithConstraintsIterator, DeclarationsIterator,
-    VisibilityConstraintIterator,
 };
 
 type SymbolMap = hashbrown::HashMap<ScopedSymbolId, (), FxBuildHasher>;

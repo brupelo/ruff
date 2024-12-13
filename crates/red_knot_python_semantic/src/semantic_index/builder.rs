@@ -24,8 +24,8 @@ use crate::semantic_index::symbol::{
     FileScopeId, NodeWithScopeKey, NodeWithScopeRef, Scope, ScopeId, ScopedSymbolId,
     SymbolTableBuilder,
 };
-use crate::semantic_index::use_def::{FlowSnapshot, UseDefMapBuilder};
-use crate::semantic_index::visibility_constraint::VisibilityConstraint;
+use crate::semantic_index::use_def::{FlowSnapshot, ScopedConstraintId, UseDefMapBuilder};
+use crate::semantic_index::visibility_constraint::VisibilityConstraintRef;
 use crate::semantic_index::SemanticIndex;
 use crate::unpack::Unpack;
 use crate::Db;
@@ -277,19 +277,22 @@ impl<'db> SemanticIndexBuilder<'db> {
         definition
     }
 
-    fn record_expression_constraint(&mut self, constraint_node: &ast::Expr) -> Constraint<'db> {
+    fn record_expression_constraint(
+        &mut self,
+        constraint_node: &ast::Expr,
+    ) -> (ScopedConstraintId, Constraint<'db>) {
         let constraint = self.build_constraint(constraint_node);
-        self.record_constraint(constraint);
-        constraint
+        let constraint_id = self.record_constraint(constraint);
+        (constraint_id, constraint)
     }
 
-    fn record_constraint(&mut self, constraint: Constraint<'db>) {
-        self.current_use_def_map_mut().record_constraint(constraint);
+    fn record_constraint(&mut self, constraint: Constraint<'db>) -> ScopedConstraintId {
+        self.current_use_def_map_mut().record_constraint(constraint)
     }
 
-    fn record_visibility_constraint(&mut self, constraint: Constraint<'db>) {
+    fn record_visibility_constraint(&mut self, constraint: ScopedConstraintId) {
         self.current_use_def_map_mut()
-            .record_visibility_constraint(VisibilityConstraint::Constraint(constraint));
+            .record_visibility_constraint(VisibilityConstraintRef::Single(constraint));
     }
 
     fn build_constraint(&mut self, constraint_node: &Expr) -> Constraint<'db> {
@@ -300,13 +303,16 @@ impl<'db> SemanticIndexBuilder<'db> {
         }
     }
 
-    fn record_negated_constraint(&mut self, constraint: Constraint<'db>) -> Constraint<'db> {
+    fn record_negated_constraint(
+        &mut self,
+        constraint: Constraint<'db>,
+    ) -> (ScopedConstraintId, Constraint<'db>) {
         let negated = Constraint {
             node: constraint.node,
             is_positive: false,
         };
-        self.current_use_def_map_mut().record_constraint(negated);
-        negated
+        let constraint_id = self.current_use_def_map_mut().record_constraint(negated);
+        (constraint_id, negated)
     }
 
     fn push_assignment(&mut self, assignment: CurrentAssignment<'db>) {
@@ -795,10 +801,10 @@ where
             ast::Stmt::If(node) => {
                 self.visit_expr(&node.test);
                 let pre_if = self.flow_snapshot();
-                let constraint = self.record_expression_constraint(&node.test);
-                let mut constraints = vec![constraint];
+                let (constraint_id, constraint) = self.record_expression_constraint(&node.test);
+                let mut constraints = vec![(constraint_id, constraint)];
                 self.visit_body(&node.body);
-                self.record_visibility_constraint(constraint);
+                self.record_visibility_constraint(constraint_id);
                 let mut post_clauses: Vec<FlowSnapshot> = vec![];
                 let elif_else_clauses = node
                     .elif_else_clauses
@@ -824,7 +830,7 @@ where
                     self.flow_restore(pre_if.clone());
                     let negated_constraints = constraints
                         .iter()
-                        .map(|constraint| self.record_negated_constraint(*constraint))
+                        .map(|(_, constraint)| self.record_negated_constraint(*constraint))
                         .collect::<Vec<_>>();
 
                     if let Some(elif_test) = clause_test {
@@ -833,8 +839,8 @@ where
                     }
                     self.visit_body(clause_body);
 
-                    for negated_constraint in negated_constraints {
-                        self.record_visibility_constraint(negated_constraint);
+                    for (negated_constraint_id, negated_constraint) in negated_constraints {
+                        self.record_visibility_constraint(negated_constraint_id);
                     }
                 }
 
@@ -851,7 +857,7 @@ where
                 self.visit_expr(test);
 
                 let pre_loop = self.flow_snapshot();
-                let constraint = self.record_expression_constraint(test);
+                let (constraint_id, constraint) = self.record_expression_constraint(test);
 
                 // Save aside any break states from an outer loop
                 let saved_break_states = std::mem::take(&mut self.loop_break_states);
@@ -1231,7 +1237,7 @@ where
             }) => {
                 self.visit_expr(test);
                 let pre_if = self.flow_snapshot();
-                let constraint = self.record_expression_constraint(test);
+                let (constraint_id, constraint) = self.record_expression_constraint(test);
                 self.visit_expr(body);
                 let post_body = self.flow_snapshot();
                 self.flow_restore(pre_if);
