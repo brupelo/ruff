@@ -229,13 +229,10 @@ use self::symbol_state::{
 use crate::semantic_index::ast_ids::ScopedUseId;
 use crate::semantic_index::definition::Definition;
 use crate::semantic_index::symbol::ScopedSymbolId;
-use crate::semantic_index::visibility_constraint::{
-    self, VisibilityConstraint, VisibilityConstraintRef,
-};
+use crate::semantic_index::visibility_constraint::{VisibilityConstraint, VisibilityConstraintRef};
 use crate::symbol::Boundness;
 use crate::types::{analyze_visibility, StaticVisibility};
 use ruff_index::IndexVec;
-use ruff_python_ast::helpers::Truthiness;
 use rustc_hash::FxHashMap;
 
 use super::constraint::Constraint;
@@ -470,7 +467,7 @@ impl DeclarationsIterator<'_, '_> {
     }
 }
 
-impl<'map, 'db> Iterator for DeclarationsIterator<'map, 'db> {
+impl<'db> Iterator for DeclarationsIterator<'_, 'db> {
     type Item = (Definition<'db>, VisibilityConstraint<'db>);
 
     fn next(&mut self) -> Option<Self::Item> {

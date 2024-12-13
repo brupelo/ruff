@@ -35,8 +35,8 @@ pub(crate) enum StaticVisibility {
 }
 
 /// Analyze the (statically known) truthiness for a list of visibility constraints.
-pub(crate) fn analyze_visibility<'db>(
-    db: &'db dyn Db,
+pub(crate) fn analyze_visibility(
+    db: &dyn Db,
     visibility_constraint: VisibilityConstraint,
 ) -> StaticVisibility {
     match visibility_constraint {

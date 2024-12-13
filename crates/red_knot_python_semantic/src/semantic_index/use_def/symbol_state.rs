@@ -90,7 +90,7 @@ type ConstraintsIterator<'a> = std::slice::Iter<'a, Constraints>;
 type ConstraintsIntoIterator = smallvec::IntoIter<InlineConstraintArray>;
 
 /// Similar to what we have above, but for visibility constraints.
-const INLINE_VISIBILITY_CONSTRAINT_BLOCKS: usize = 2;
+// const INLINE_VISIBILITY_CONSTRAINT_BLOCKS: usize = 2;
 const INLINE_VISIBILITY_CONSTRAINTS: usize = 4;
 // pub(super) type VisibilityConstraints = BitSet<INLINE_VISIBILITY_CONSTRAINT_BLOCKS>;
 type InlineVisibilityConstraintsArray = [VisibilityConstraintRef; INLINE_VISIBILITY_CONSTRAINTS];
@@ -135,17 +135,17 @@ impl SymbolDeclarations {
         self.may_be_undeclared = true;
     }
 
-    /// Return an iterator over live declarations for this symbol.
-    pub(super) fn iter<'map, 'db>(
-        &'db self,
-        all_constraints: &'map IndexVec<ScopedConstraintId, Constraint<'db>>,
-    ) -> DeclarationIdIterator<'map, 'db> {
-        DeclarationIdIterator {
-            all_constraints,
-            inner: self.live_declarations.iter(),
-            visibility_constraints: self.visibility_constraints.iter(),
-        }
-    }
+    // /// Return an iterator over live declarations for this symbol.
+    // pub(super) fn iter<'map, 'db>(
+    //     &'db self,
+    //     all_constraints: &'map IndexVec<ScopedConstraintId, Constraint<'db>>,
+    // ) -> DeclarationIdIterator<'map, 'db> {
+    //     DeclarationIdIterator {
+    //         all_constraints,
+    //         inner: self.live_declarations.iter(),
+    //         visibility_constraints: self.visibility_constraints.iter(),
+    //     }
+    // }
 
     pub(super) fn may_be_undeclared(&self) -> bool {
         self.may_be_undeclared
@@ -579,7 +579,7 @@ pub(super) struct DeclarationIdIterator<'map, 'db> {
     pub(crate) visibility_constraints: VisibilityConstraintsIterator<'map>,
 }
 
-impl<'map, 'db> Iterator for DeclarationIdIterator<'map, 'db> {
+impl<'db> Iterator for DeclarationIdIterator<'_, 'db> {
     type Item = (ScopedDefinitionId, VisibilityConstraint<'db>);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -599,7 +599,7 @@ impl std::iter::FusedIterator for DeclarationIdIterator<'_, '_> {}
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    // use super::*;
 
     // #[track_caller]
     // fn assert_bindings(symbol: &SymbolState, may_be_unbound: bool, expected: &[&str]) {

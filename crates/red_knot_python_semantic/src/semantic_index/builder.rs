@@ -865,7 +865,7 @@ where
                 self.visit_expr(test);
 
                 let pre_loop = self.flow_snapshot();
-                let (constraint_id, constraint) = self.record_expression_constraint(test);
+                let (_, constraint) = self.record_expression_constraint(test);
 
                 // Save aside any break states from an outer loop
                 let saved_break_states = std::mem::take(&mut self.loop_break_states);
@@ -1245,7 +1245,7 @@ where
             }) => {
                 self.visit_expr(test);
                 let pre_if = self.flow_snapshot();
-                let (constraint_id, constraint) = self.record_expression_constraint(test);
+                let (_, constraint) = self.record_expression_constraint(test);
                 self.visit_expr(body);
                 let post_body = self.flow_snapshot();
                 self.flow_restore(pre_if);

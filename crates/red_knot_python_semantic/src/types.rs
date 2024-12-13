@@ -295,9 +295,9 @@ impl<'db> Visibility<'db> {
 /// Infer the combined type of an iterator of bindings.
 ///
 /// Will return a union if there is more than one binding.
-fn bindings_ty<'map, 'db>(
+fn bindings_ty<'db>(
     db: &'db dyn Db,
-    bindings_with_constraints: BindingWithConstraintsIterator<'map, 'db>,
+    bindings_with_constraints: BindingWithConstraintsIterator<'_, 'db>,
 ) -> Option<Type<'db>> {
     let types = bindings_with_constraints.map(
         |BindingWithConstraints {
@@ -2600,9 +2600,9 @@ impl Truthiness {
         matches!(self, Truthiness::AlwaysFalse)
     }
 
-    pub(crate) const fn is_always_true(self) -> bool {
-        matches!(self, Truthiness::AlwaysTrue)
-    }
+    // pub(crate) const fn is_always_true(self) -> bool {
+    //     matches!(self, Truthiness::AlwaysTrue)
+    // }
 
     pub(crate) const fn negate(self) -> Self {
         match self {
