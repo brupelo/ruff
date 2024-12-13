@@ -51,9 +51,9 @@ pub(crate) enum VisibilityConstraint<'db> {
 }
 
 impl<'db> VisibilityConstraint<'db> {
-    pub(crate) fn from_ref(
-        all_constraints: &IndexVec<ScopedConstraintId, Constraint<'db>>,
-        visibility_constraint_ref: &VisibilityConstraintRef,
+    pub(crate) fn from_ref<'map>(
+        all_constraints: &'map IndexVec<ScopedConstraintId, Constraint<'db>>,
+        visibility_constraint_ref: &'map VisibilityConstraintRef,
     ) -> VisibilityConstraint<'db> {
         match visibility_constraint_ref {
             VisibilityConstraintRef::None => VisibilityConstraint::None,

@@ -31,7 +31,7 @@ use crate::types::diagnostic::TypeCheckDiagnosticsBuilder;
 use crate::types::mro::{ClassBase, Mro, MroError, MroIterator};
 use crate::types::narrow::narrowing_constraint;
 use crate::{Db, FxOrderSet, Module, Program, PythonVersion};
-pub(crate) use static_truthiness::StaticTruthiness;
+pub(crate) use static_truthiness::{analyze_visibility, StaticVisibility};
 
 mod builder;
 mod call;
@@ -295,9 +295,9 @@ impl<'db> Visibility<'db> {
 /// Infer the combined type of an iterator of bindings.
 ///
 /// Will return a union if there is more than one binding.
-fn bindings_ty<'db>(
+fn bindings_ty<'map, 'db>(
     db: &'db dyn Db,
-    bindings_with_constraints: BindingWithConstraintsIterator<'_, 'db>,
+    bindings_with_constraints: BindingWithConstraintsIterator<'map, 'db>,
 ) -> Option<Type<'db>> {
     let types = bindings_with_constraints.map(
         |BindingWithConstraints {
@@ -306,10 +306,10 @@ fn bindings_ty<'db>(
              visibility_constraint: visibility_constraints,
          }| {
             // dbg!("====");
-            let result = StaticTruthiness::analyze(db, visibility_constraints);
+            let static_visibility = analyze_visibility(db, visibility_constraints);
             // dbg!(&result);
 
-            if result.any_always_false {
+            if static_visibility == StaticVisibility::Invisible {
                 Visibility::Invisible
             } else {
                 let mut constraint_tys = constraints
@@ -382,9 +382,9 @@ fn declarations_ty<'db>(
 ) -> DeclaredTypeResult<'db> {
     let types = declarations
         .map(|(declaration, visibility_constraints)| {
-            let result = StaticTruthiness::analyze(db, visibility_constraints);
+            let visibility = analyze_visibility(db, visibility_constraints);
 
-            if result.any_always_false {
+            if visibility == StaticVisibility::Invisible {
                 Visibility::Invisible
             } else {
                 // if result.at_least_one_constraint && result.all_always_true {

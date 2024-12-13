@@ -102,10 +102,10 @@ type VisibilityConstraintsIntoIterator = smallvec::IntoIter<InlineVisibilityCons
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct SymbolDeclarations {
     /// [`BitSet`]: which declarations (as [`ScopedDefinitionId`]) can reach the current location?
-    live_declarations: Declarations,
+    pub(crate) live_declarations: Declarations,
 
     /// For each live declaration, which [`VisibilityConstraints`] were active at that declaration?
-    visibility_constraints: VisibilityConstraintPerBinding,
+    pub(crate) visibility_constraints: VisibilityConstraintPerBinding,
 
     /// Could the symbol be un-declared at this point?
     may_be_undeclared: bool,
@@ -136,10 +136,10 @@ impl SymbolDeclarations {
     }
 
     /// Return an iterator over live declarations for this symbol.
-    pub(super) fn iter<'db>(
+    pub(super) fn iter<'map, 'db>(
         &'db self,
-        all_constraints: &'db IndexVec<ScopedConstraintId, Constraint<'db>>,
-    ) -> DeclarationIdIterator<'db> {
+        all_constraints: &'map IndexVec<ScopedConstraintId, Constraint<'db>>,
+    ) -> DeclarationIdIterator<'map, 'db> {
         DeclarationIdIterator {
             all_constraints,
             inner: self.live_declarations.iter(),
@@ -209,7 +209,7 @@ impl SymbolBindings {
     }
 
     /// Add given visibility constraint to all live bindings.
-    pub(super) fn record_visibility_constraint(&mut self, constraint: VisibilityConstraintRef) {
+    pub(super) fn record_visibility_constraint(&mut self, constraint: &VisibilityConstraintRef) {
         for existing in &mut self.visibility_constraints {
             *existing = VisibilityConstraintRef::And(
                 Box::new(existing.clone()),
@@ -219,10 +219,10 @@ impl SymbolBindings {
     }
 
     /// Iterate over currently live bindings for this symbol
-    pub(super) fn iter<'db>(
-        &'db self,
-        all_constraints: &'db IndexVec<ScopedConstraintId, Constraint<'db>>,
-    ) -> BindingIdWithConstraintsIterator<'db> {
+    pub(super) fn iter<'map, 'db>(
+        &'map self,
+        all_constraints: &'map IndexVec<ScopedConstraintId, Constraint<'db>>,
+    ) -> BindingIdWithConstraintsIterator<'map, 'db> {
         BindingIdWithConstraintsIterator {
             all_constraints,
             definitions: self.live_bindings.iter(),
@@ -267,7 +267,7 @@ impl SymbolState {
     }
 
     /// Add given visibility constraint to all live bindings.
-    pub(super) fn record_visibility_constraint(&mut self, constraint: VisibilityConstraintRef) {
+    pub(super) fn record_visibility_constraint(&mut self, constraint: &VisibilityConstraintRef) {
         self.bindings.record_visibility_constraint(constraint);
     }
 
@@ -379,10 +379,7 @@ impl SymbolState {
                         let a_constraints = a_constraints_iter
                             .next()
                             .expect("definitions and constraints length mismatch");
-                        // SAFETY: The same is true for visibility_constraints.
-                        a_vis_constraints_iter
-                            .next()
-                            .expect("visibility_constraints length mismatch");
+
                         // If the same definition is visible through both paths, any constraint
                         // that applies on only one path is irrelevant to the resulting type from
                         // unioning the two paths, so we intersect the constraints.
@@ -391,13 +388,14 @@ impl SymbolState {
                             .last_mut()
                             .unwrap()
                             .intersect(&a_constraints);
-                        // TODO: documentation
 
-                        let current = self.bindings.visibility_constraints.last_mut().unwrap();
+                        // TODO: documentation
+                        // SAFETY: See above
                         let a_vis_constraint = a_vis_constraints_iter
                             .next()
                             .expect("visibility_constraints length mismatch");
-
+                        let current = self.bindings.visibility_constraints.last_mut().unwrap();
+                        // dbg!(&current);
                         *current = VisibilityConstraintRef::Or(
                             Box::new(current.clone()),
                             Box::new(a_vis_constraint),
@@ -430,6 +428,7 @@ impl SymbolState {
                 (None, None) => break,
             }
         }
+        // dbg!("After loop");
 
         // Same as above, but for declarations.
         let mut a_decls_iter = a.declarations.live_declarations.iter();
@@ -514,22 +513,22 @@ impl Default for SymbolState {
 /// A single binding (as [`ScopedDefinitionId`]) with an iterator of its applicable
 /// [`ScopedConstraintId`].
 #[derive(Debug)]
-pub(super) struct BindingIdWithConstraints<'a> {
+pub(super) struct BindingIdWithConstraints<'map, 'db> {
     pub(super) definition: ScopedDefinitionId,
-    pub(super) constraint_ids: ConstraintIdIterator<'a>,
-    pub(super) visibility_constraint: VisibilityConstraint<'a>,
+    pub(super) constraint_ids: ConstraintIdIterator<'map>,
+    pub(super) visibility_constraint: VisibilityConstraint<'db>,
 }
 
 #[derive(Debug)]
-pub(super) struct BindingIdWithConstraintsIterator<'a> {
-    all_constraints: &'a IndexVec<ScopedConstraintId, Constraint<'a>>,
-    definitions: BindingsIterator<'a>,
-    constraints: ConstraintsIterator<'a>,
-    visibility_constraints: VisibilityConstraintsIterator<'a>,
+pub(super) struct BindingIdWithConstraintsIterator<'map, 'db> {
+    all_constraints: &'map IndexVec<ScopedConstraintId, Constraint<'db>>,
+    definitions: BindingsIterator<'map>,
+    constraints: ConstraintsIterator<'map>,
+    visibility_constraints: VisibilityConstraintsIterator<'map>,
 }
 
-impl<'a> Iterator for BindingIdWithConstraintsIterator<'a> {
-    type Item = BindingIdWithConstraints<'a>;
+impl<'map, 'db> Iterator for BindingIdWithConstraintsIterator<'map, 'db> {
+    type Item = BindingIdWithConstraints<'map, 'db>;
 
     fn next(&mut self) -> Option<Self::Item> {
         match (
@@ -556,7 +555,7 @@ impl<'a> Iterator for BindingIdWithConstraintsIterator<'a> {
     }
 }
 
-impl std::iter::FusedIterator for BindingIdWithConstraintsIterator<'_> {}
+impl std::iter::FusedIterator for BindingIdWithConstraintsIterator<'_, '_> {}
 
 #[derive(Debug)]
 pub(super) struct ConstraintIdIterator<'a> {
@@ -574,14 +573,14 @@ impl Iterator for ConstraintIdIterator<'_> {
 impl std::iter::FusedIterator for ConstraintIdIterator<'_> {}
 
 #[derive(Clone)]
-pub(super) struct DeclarationIdIterator<'a> {
-    all_constraints: &'a IndexVec<ScopedConstraintId, Constraint<'a>>,
-    inner: DeclarationsIterator<'a>,
-    visibility_constraints: VisibilityConstraintsIterator<'a>,
+pub(super) struct DeclarationIdIterator<'map, 'db> {
+    pub(crate) all_constraints: &'map IndexVec<ScopedConstraintId, Constraint<'db>>,
+    pub(crate) inner: DeclarationsIterator<'map>,
+    pub(crate) visibility_constraints: VisibilityConstraintsIterator<'map>,
 }
 
-impl<'a> Iterator for DeclarationIdIterator<'a> {
-    type Item = (ScopedDefinitionId, VisibilityConstraint<'a>);
+impl<'map, 'db> Iterator for DeclarationIdIterator<'map, 'db> {
+    type Item = (ScopedDefinitionId, VisibilityConstraint<'db>);
 
     fn next(&mut self) -> Option<Self::Item> {
         match (self.inner.next(), self.visibility_constraints.next()) {
@@ -596,7 +595,7 @@ impl<'a> Iterator for DeclarationIdIterator<'a> {
     }
 }
 
-impl std::iter::FusedIterator for DeclarationIdIterator<'_> {}
+impl std::iter::FusedIterator for DeclarationIdIterator<'_, '_> {}
 
 #[cfg(test)]
 mod tests {

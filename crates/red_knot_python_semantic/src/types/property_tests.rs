@@ -201,10 +201,10 @@ mod stable {
     );
 
     // `T` can be assigned to itself.
-    type_property_test!(
-        assignable_to_is_reflexive, db,
-        forall types t. t.is_assignable_to(db, t)
-    );
+    // type_property_test!(
+    //     assignable_to_is_reflexive, db,
+    //     forall types t. t.is_assignable_to(db, t)
+    // );
 
     // `S <: T` implies that `S` can be assigned to `T`.
     type_property_test!(

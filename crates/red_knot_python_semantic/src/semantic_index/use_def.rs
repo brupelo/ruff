@@ -229,10 +229,13 @@ use self::symbol_state::{
 use crate::semantic_index::ast_ids::ScopedUseId;
 use crate::semantic_index::definition::Definition;
 use crate::semantic_index::symbol::ScopedSymbolId;
-use crate::semantic_index::visibility_constraint::{VisibilityConstraint, VisibilityConstraintRef};
+use crate::semantic_index::visibility_constraint::{
+    self, VisibilityConstraint, VisibilityConstraintRef,
+};
 use crate::symbol::Boundness;
-use crate::types::StaticTruthiness;
+use crate::types::{analyze_visibility, StaticVisibility};
 use ruff_index::IndexVec;
+use ruff_python_ast::helpers::Truthiness;
 use rustc_hash::FxHashMap;
 
 use super::constraint::Constraint;
@@ -321,10 +324,10 @@ impl<'db> UseDefMap<'db> {
         }
     }
 
-    pub(crate) fn declarations_at_binding(
-        &self,
+    pub(crate) fn declarations_at_binding<'map>(
+        &'map self,
         binding: Definition<'db>,
-    ) -> DeclarationsIterator<'_, 'db> {
+    ) -> DeclarationsIterator<'map, 'db> {
         if let SymbolDefinitions::Declarations(declarations) =
             &self.definitions_by_definition[&binding]
         {
@@ -334,33 +337,47 @@ impl<'db> UseDefMap<'db> {
         }
     }
 
-    pub(crate) fn public_declarations(
-        &self,
+    pub(crate) fn public_declarations<'map>(
+        &'map self,
         symbol: ScopedSymbolId,
-    ) -> DeclarationsIterator<'_, 'db> {
+    ) -> DeclarationsIterator<'map, 'db> {
         let declarations = self.public_symbols[symbol].declarations();
         self.declarations_iterator(declarations)
     }
 
-    fn bindings_iterator<'a>(
-        &'a self,
-        bindings: &'a SymbolBindings,
-    ) -> BindingWithConstraintsIterator<'a, 'db> {
+    fn bindings_iterator<'map>(
+        &'map self,
+        bindings: &'map SymbolBindings,
+    ) -> BindingWithConstraintsIterator<'map, 'db> {
+        let all_definitions: &'map IndexVec<ScopedDefinitionId, Definition<'db>> =
+            &self.all_definitions;
+        let all_constraints: &'map IndexVec<ScopedConstraintId, Constraint<'db>> =
+            &self.all_constraints;
+        let inner = bindings.iter(&self.all_constraints);
+
         BindingWithConstraintsIterator {
-            all_definitions: &self.all_definitions,
-            all_constraints: &self.all_constraints,
-            inner: bindings.iter(&self.all_constraints),
+            all_definitions,
+            all_constraints,
+            inner,
         }
     }
 
-    fn declarations_iterator<'a>(
-        &'a self,
-        declarations: &'a SymbolDeclarations,
-    ) -> DeclarationsIterator<'a, 'db> {
+    fn declarations_iterator<'map>(
+        &'map self,
+        declarations: &'map SymbolDeclarations,
+    ) -> DeclarationsIterator<'map, 'db> {
+        let all_constraints: &'map IndexVec<ScopedConstraintId, Constraint<'db>> =
+            &self.all_constraints;
+
         DeclarationsIterator {
             all_definitions: &self.all_definitions,
-            all_constraints: &self.all_constraints,
-            inner: declarations.iter(&self.all_constraints),
+            inner: {
+                DeclarationIdIterator {
+                    all_constraints,
+                    inner: declarations.live_declarations.iter(),
+                    visibility_constraints: declarations.visibility_constraints.iter(),
+                }
+            },
             may_be_undeclared: declarations.may_be_undeclared(),
         }
     }
@@ -377,25 +394,35 @@ enum SymbolDefinitions {
 pub(crate) struct BindingWithConstraintsIterator<'map, 'db> {
     all_definitions: &'map IndexVec<ScopedDefinitionId, Definition<'db>>,
     all_constraints: &'map IndexVec<ScopedConstraintId, Constraint<'db>>,
-    inner: BindingIdWithConstraintsIterator<'map>,
+    inner: BindingIdWithConstraintsIterator<'map, 'db>,
 }
 
 impl<'map, 'db> Iterator for BindingWithConstraintsIterator<'map, 'db> {
     type Item = BindingWithConstraints<'map, 'db>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next().map(|binding| BindingWithConstraints {
-            binding: self.all_definitions[binding.definition],
-            constraints: ConstraintsIterator {
-                all_constraints: self.all_constraints,
-                constraint_ids: binding.constraint_ids,
-            },
-            visibility_constraint: binding.visibility_constraint,
+        let all_constraints = self.all_constraints;
+
+        self.inner.next().map(|binding_id_with_constraints| {
+            let binding: Definition<'db> =
+                self.all_definitions[binding_id_with_constraints.definition];
+            let constraints: ConstraintsIterator<'map, 'db> = ConstraintsIterator {
+                all_constraints,
+                constraint_ids: binding_id_with_constraints.constraint_ids,
+            };
+            let visibility_constraint: VisibilityConstraint<'db> =
+                binding_id_with_constraints.visibility_constraint;
+
+            BindingWithConstraints {
+                binding,
+                constraints,
+                visibility_constraint,
+            }
         })
     }
 }
 
-impl std::iter::FusedIterator for BindingWithConstraintsIterator<'_, '_> {}
+// impl std::iter::FusedIterator for BindingWithConstraintsIterator<'_, '_> {}
 
 pub(crate) struct BindingWithConstraints<'map, 'db> {
     pub(crate) binding: Definition<'db>,
@@ -423,8 +450,7 @@ impl std::iter::FusedIterator for ConstraintsIterator<'_, '_> {}
 #[derive(Clone)]
 pub(crate) struct DeclarationsIterator<'map, 'db> {
     all_definitions: &'map IndexVec<ScopedDefinitionId, Definition<'db>>,
-    all_constraints: &'map IndexVec<ScopedConstraintId, Constraint<'db>>,
-    inner: DeclarationIdIterator<'map>,
+    inner: DeclarationIdIterator<'map, 'db>,
     may_be_undeclared: bool,
 }
 
@@ -504,9 +530,9 @@ impl<'db> UseDefMapBuilder<'db> {
         constraint_id
     }
 
-    pub(super) fn record_visibility_constraint(&mut self, constraint: VisibilityConstraintRef) {
+    pub(super) fn record_visibility_constraint(&mut self, constraint: &VisibilityConstraintRef) {
         for state in &mut self.symbol_states {
-            state.record_visibility_constraint(constraint.clone());
+            state.record_visibility_constraint(constraint);
         }
     }
 
@@ -654,12 +680,31 @@ where
     'db: 'map,
     C: Iterator<Item = VisibilityConstraint<'db>>,
 {
-    let result = conditions_per_binding.fold(StaticTruthiness::no_bindings(), |r, conditions| {
-        r.flow_merge(&StaticTruthiness::analyze(db, conditions))
-    });
+    let visibility = conditions_per_binding
+        .map(|v| analyze_visibility(db, v))
+        .reduce(|v1, v2| match (v1, v2) {
+            (StaticVisibility::Invisible, StaticVisibility::Invisible) => {
+                StaticVisibility::Invisible
+            }
+            (StaticVisibility::Invisible, StaticVisibility::Visible) => StaticVisibility::Ambiguous,
+            (StaticVisibility::Invisible, StaticVisibility::Ambiguous) => {
+                StaticVisibility::Ambiguous
+            }
+            (StaticVisibility::Visible, StaticVisibility::Invisible) => StaticVisibility::Ambiguous,
+            (StaticVisibility::Visible, StaticVisibility::Visible) => StaticVisibility::Visible,
+            (StaticVisibility::Visible, StaticVisibility::Ambiguous) => StaticVisibility::Ambiguous,
+            (StaticVisibility::Ambiguous, StaticVisibility::Invisible) => {
+                StaticVisibility::Ambiguous
+            }
+            (StaticVisibility::Ambiguous, StaticVisibility::Visible) => StaticVisibility::Ambiguous,
+            (StaticVisibility::Ambiguous, StaticVisibility::Ambiguous) => {
+                StaticVisibility::Ambiguous
+            }
+        })
+        .unwrap_or(StaticVisibility::Invisible);
 
-    let definitely_unbound = result.any_always_false;
-    let definitely_bound = result.all_always_true || !may_be_unbound;
+    let definitely_unbound = visibility == StaticVisibility::Invisible;
+    let definitely_bound = visibility == StaticVisibility::Visible || !may_be_unbound;
 
     if definitely_unbound {
         None

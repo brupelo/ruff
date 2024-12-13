@@ -292,7 +292,7 @@ impl<'db> SemanticIndexBuilder<'db> {
 
     fn record_visibility_constraint(&mut self, constraint: ScopedConstraintId) {
         self.current_use_def_map_mut()
-            .record_visibility_constraint(VisibilityConstraintRef::Single(constraint));
+            .record_visibility_constraint(&VisibilityConstraintRef::Single(constraint));
     }
 
     fn build_constraint(&mut self, constraint_node: &Expr) -> Constraint<'db> {
@@ -833,14 +833,22 @@ where
                         .map(|(_, constraint)| self.record_negated_constraint(*constraint))
                         .collect::<Vec<_>>();
 
-                    if let Some(elif_test) = clause_test {
+                    let elif_constraint = if let Some(elif_test) = clause_test {
                         self.visit_expr(elif_test);
-                        constraints.push(self.record_expression_constraint(elif_test));
-                    }
+                        let (constraint_id, constraint) =
+                            self.record_expression_constraint(elif_test);
+                        constraints.push((constraint_id, constraint));
+                        Some(constraint_id)
+                    } else {
+                        None
+                    };
                     self.visit_body(clause_body);
 
-                    for (negated_constraint_id, negated_constraint) in negated_constraints {
+                    for (negated_constraint_id, _) in negated_constraints {
                         self.record_visibility_constraint(negated_constraint_id);
+                    }
+                    if let Some(elif_constraint) = elif_constraint {
+                        self.record_visibility_constraint(elif_constraint);
                     }
                 }
 
