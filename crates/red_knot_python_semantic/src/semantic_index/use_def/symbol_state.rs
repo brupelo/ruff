@@ -43,7 +43,7 @@
 //!
 //! Tracking live declarations is simpler, since constraints are not involved, but otherwise very
 //! similar to tracking live bindings.
-use super::bitset::{BitSet, BitSetIterator, ReverseBitSetIterator};
+use super::bitset::{BitSet, BitSetIterator};
 use ruff_index::newtype_index;
 use smallvec::SmallVec;
 
@@ -64,14 +64,14 @@ const INLINE_BINDING_BLOCKS: usize = 3;
 
 /// A [`BitSet`] of [`ScopedDefinitionId`], representing live bindings of a symbol in a scope.
 type Bindings = BitSet<INLINE_BINDING_BLOCKS>;
-type ReverseBindingsIterator<'a> = ReverseBitSetIterator<'a, INLINE_BINDING_BLOCKS>;
+type BindingsIterator<'a> = BitSetIterator<'a, INLINE_BINDING_BLOCKS>;
 
 /// Can reference this * 64 total declarations inline; more will fall back to the heap.
 const INLINE_DECLARATION_BLOCKS: usize = 3;
 
 /// A [`BitSet`] of [`ScopedDefinitionId`], representing live declarations of a symbol in a scope.
 type Declarations = BitSet<INLINE_DECLARATION_BLOCKS>;
-type ReverseDeclarationsIterator<'a> = ReverseBitSetIterator<'a, INLINE_DECLARATION_BLOCKS>;
+type DeclarationsIterator<'a> = BitSetIterator<'a, INLINE_DECLARATION_BLOCKS>;
 
 /// Can reference this * 64 total constraints inline; more will fall back to the heap.
 const INLINE_CONSTRAINT_BLOCKS: usize = 2;
@@ -124,20 +124,13 @@ impl SymbolDeclarations {
     }
 
     /// Record a newly-encountered declaration for this symbol.
-    fn record_declaration(
-        &mut self,
-        declaration_id: ScopedDefinitionId,
-        visibility_constraints: &VisibilityConstraints,
-    ) {
+    fn record_declaration(&mut self, declaration_id: ScopedDefinitionId) {
         self.live_declarations = Declarations::with(declaration_id.into());
         self.may_be_undeclared = false;
 
         self.visibility_constraints = VisibilityConstraintPerBinding::with_capacity(1);
         self.visibility_constraints
             .push(VisibilityConstraints::default());
-        for active_constraint_id in visibility_constraints.iter() {
-            self.visibility_constraints[0].insert(active_constraint_id);
-        }
     }
 
     /// Add undeclared as a possibility for this symbol.
@@ -146,10 +139,10 @@ impl SymbolDeclarations {
     }
 
     /// Return an iterator over live declarations for this symbol.
-    pub(super) fn iter_rev(&self) -> DeclarationIdIterator {
+    pub(super) fn iter(&self) -> DeclarationIdIterator {
         DeclarationIdIterator {
-            inner: self.live_declarations.iter_rev(),
-            visibility_constraints: self.visibility_constraints.iter().rev(),
+            inner: self.live_declarations.iter(),
+            visibility_constraints: self.visibility_constraints.iter(),
         }
     }
 
@@ -193,11 +186,7 @@ impl SymbolBindings {
     }
 
     /// Record a newly-encountered binding for this symbol.
-    pub(super) fn record_binding(
-        &mut self,
-        binding_id: ScopedDefinitionId,
-        visibility_constraints: &VisibilityConstraints,
-    ) {
+    pub(super) fn record_binding(&mut self, binding_id: ScopedDefinitionId) {
         // The new binding replaces all previous live bindings in this path, and has no
         // constraints.
         self.live_bindings = Bindings::with(binding_id.into());
@@ -207,9 +196,7 @@ impl SymbolBindings {
         self.visibility_constraints = VisibilityConstraintPerBinding::with_capacity(1);
         self.visibility_constraints
             .push(VisibilityConstraints::default());
-        for id in visibility_constraints.iter() {
-            self.visibility_constraints[0].insert(id);
-        }
+
         self.may_be_unbound = false;
     }
 
@@ -220,12 +207,22 @@ impl SymbolBindings {
         }
     }
 
-    /// Iterate over currently live bindings for this symbol, in reverse order.
-    pub(super) fn iter_rev(&self) -> BindingIdWithConstraintsIterator {
+    /// Add given visibility constraint to all live bindings.
+    pub(super) fn record_visibility_constraint(
+        &mut self,
+        constraint_id: ScopedVisibilityConstraintId,
+    ) {
+        for bitset in &mut self.visibility_constraints {
+            bitset.insert(constraint_id.into());
+        }
+    }
+
+    /// Iterate over currently live bindings for this symbol
+    pub(super) fn iter(&self) -> BindingIdWithConstraintsIterator {
         BindingIdWithConstraintsIterator {
-            definitions: self.live_bindings.iter_rev(),
-            constraints: self.constraints.iter().rev(),
-            visibility_constraints: self.visibility_constraints.iter().rev(),
+            definitions: self.live_bindings.iter(),
+            constraints: self.constraints.iter(),
+            visibility_constraints: self.visibility_constraints.iter(),
         }
     }
 
@@ -255,18 +252,21 @@ impl SymbolState {
     }
 
     /// Record a newly-encountered binding for this symbol.
-    pub(super) fn record_binding(
-        &mut self,
-        binding_id: ScopedDefinitionId,
-        visibility_constraintss: &VisibilityConstraints,
-    ) {
-        self.bindings
-            .record_binding(binding_id, visibility_constraintss);
+    pub(super) fn record_binding(&mut self, binding_id: ScopedDefinitionId) {
+        self.bindings.record_binding(binding_id);
     }
 
     /// Add given constraint to all live bindings.
     pub(super) fn record_constraint(&mut self, constraint_id: ScopedConstraintId) {
         self.bindings.record_constraint(constraint_id);
+    }
+
+    /// Add given visibility constraint to all live bindings.
+    pub(super) fn record_visibility_constraint(
+        &mut self,
+        constraint_id: ScopedVisibilityConstraintId,
+    ) {
+        self.bindings.record_visibility_constraint(constraint_id);
     }
 
     /// Add undeclared as a possibility for this symbol.
@@ -275,13 +275,8 @@ impl SymbolState {
     }
 
     /// Record a newly-encountered declaration of this symbol.
-    pub(super) fn record_declaration(
-        &mut self,
-        declaration_id: ScopedDefinitionId,
-        visibility_constraints: &VisibilityConstraints,
-    ) {
-        self.declarations
-            .record_declaration(declaration_id, visibility_constraints);
+    pub(super) fn record_declaration(&mut self, declaration_id: ScopedDefinitionId) {
+        self.declarations.record_declaration(declaration_id);
     }
 
     /// Merge another [`SymbolState`] into this one.
@@ -307,8 +302,8 @@ impl SymbolState {
         let mut b_defs_iter = b.bindings.live_bindings.iter();
         let mut a_constraints_iter = a.bindings.constraints.into_iter();
         let mut b_constraints_iter = b.bindings.constraints.into_iter();
-        let mut a_conditions_iter = a.bindings.visibility_constraints.into_iter();
-        let mut b_conditions_iter = b.bindings.visibility_constraints.into_iter();
+        let mut a_vis_constraints_iter = a.bindings.visibility_constraints.into_iter();
+        let mut b_vis_constraints_iter = b.bindings.visibility_constraints.into_iter();
 
         let mut opt_a_def: Option<u32> = a_defs_iter.next();
         let mut opt_b_def: Option<u32> = b_defs_iter.next();
@@ -348,17 +343,32 @@ impl SymbolState {
                 (Some(a_def), Some(b_def)) => match a_def.cmp(&b_def) {
                     std::cmp::Ordering::Less => {
                         // Next definition ID is only in `a`, push it to `self` and advance `a`.
-                        push(a_def, &mut a_constraints_iter, &mut a_conditions_iter, self);
+                        push(
+                            a_def,
+                            &mut a_constraints_iter,
+                            &mut a_vis_constraints_iter,
+                            self,
+                        );
                         opt_a_def = a_defs_iter.next();
                     }
                     std::cmp::Ordering::Greater => {
                         // Next definition ID is only in `b`, push it to `self` and advance `b`.
-                        push(b_def, &mut b_constraints_iter, &mut b_conditions_iter, self);
+                        push(
+                            b_def,
+                            &mut b_constraints_iter,
+                            &mut b_vis_constraints_iter,
+                            self,
+                        );
                         opt_b_def = b_defs_iter.next();
                     }
                     std::cmp::Ordering::Equal => {
                         // Next definition is in both; push to `self` and intersect constraints.
-                        push(a_def, &mut b_constraints_iter, &mut b_conditions_iter, self);
+                        push(
+                            a_def,
+                            &mut b_constraints_iter,
+                            &mut b_vis_constraints_iter,
+                            self,
+                        );
                         // SAFETY: we only ever create SymbolState with either no definitions and
                         // no constraint bitsets (`::unbound`) or one definition and one constraint
                         // bitset (`::with`), and `::merge` always pushes one definition and one
@@ -368,7 +378,7 @@ impl SymbolState {
                             .next()
                             .expect("definitions and constraints length mismatch");
                         // SAFETY: The same is true for visibility_constraints.
-                        a_conditions_iter
+                        a_vis_constraints_iter
                             .next()
                             .expect("visibility_constraints length mismatch");
                         // If the same definition is visible through both paths, any constraint
@@ -385,12 +395,22 @@ impl SymbolState {
                 },
                 (Some(a_def), None) => {
                     // We've exhausted `b`, just push the def from `a` and move on to the next.
-                    push(a_def, &mut a_constraints_iter, &mut a_conditions_iter, self);
+                    push(
+                        a_def,
+                        &mut a_constraints_iter,
+                        &mut a_vis_constraints_iter,
+                        self,
+                    );
                     opt_a_def = a_defs_iter.next();
                 }
                 (None, Some(b_def)) => {
                     // We've exhausted `a`, just push the def from `b` and move on to the next.
-                    push(b_def, &mut b_constraints_iter, &mut b_conditions_iter, self);
+                    push(
+                        b_def,
+                        &mut b_constraints_iter,
+                        &mut b_vis_constraints_iter,
+                        self,
+                    );
                     opt_b_def = b_defs_iter.next();
                 }
                 (None, None) => break,
@@ -400,8 +420,8 @@ impl SymbolState {
         // Same as above, but for declarations.
         let mut a_decls_iter = a.declarations.live_declarations.iter();
         let mut b_decls_iter = b.declarations.live_declarations.iter();
-        let mut a_conditions_iter = a.declarations.visibility_constraints.into_iter();
-        let mut b_conditions_iter = b.declarations.visibility_constraints.into_iter();
+        let mut a_vis_constraints_iter = a.declarations.visibility_constraints.into_iter();
+        let mut b_vis_constraints_iter = b.declarations.visibility_constraints.into_iter();
 
         let mut opt_a_decl: Option<u32> = a_decls_iter.next();
         let mut opt_b_decl: Option<u32> = b_decls_iter.next();
@@ -420,20 +440,20 @@ impl SymbolState {
                 (Some(a_decl), Some(b_decl)) => {
                     match a_decl.cmp(&b_decl) {
                         std::cmp::Ordering::Less => {
-                            push(a_decl, &mut a_conditions_iter, self);
+                            push(a_decl, &mut a_vis_constraints_iter, self);
                             opt_a_decl = a_decls_iter.next();
                         }
                         std::cmp::Ordering::Greater => {
-                            push(b_decl, &mut b_conditions_iter, self);
+                            push(b_decl, &mut b_vis_constraints_iter, self);
                             opt_b_decl = b_decls_iter.next();
                         }
                         std::cmp::Ordering::Equal => {
-                            push(a_decl, &mut b_conditions_iter, self);
+                            push(a_decl, &mut b_vis_constraints_iter, self);
                             self.declarations
                                 .visibility_constraints
                                 .last_mut()
                                 .expect("declarations and visibility_constraints length mismatch")
-                                .intersect(&a_conditions_iter.next().expect(
+                                .intersect(&a_vis_constraints_iter.next().expect(
                                     "declarations and visibility_constraints length mismatch",
                                 ));
 
@@ -443,11 +463,11 @@ impl SymbolState {
                     }
                 }
                 (Some(a_decl), None) => {
-                    push(a_decl, &mut a_conditions_iter, self);
+                    push(a_decl, &mut a_vis_constraints_iter, self);
                     opt_a_decl = a_decls_iter.next();
                 }
                 (None, Some(b_decl)) => {
-                    push(b_decl, &mut b_conditions_iter, self);
+                    push(b_decl, &mut b_vis_constraints_iter, self);
                     opt_b_decl = b_decls_iter.next();
                 }
                 (None, None) => break,
@@ -483,9 +503,9 @@ pub(super) struct BindingIdWithConstraints<'a> {
 
 #[derive(Debug)]
 pub(super) struct BindingIdWithConstraintsIterator<'a> {
-    definitions: ReverseBindingsIterator<'a>,
-    constraints: std::iter::Rev<ConstraintsIterator<'a>>,
-    visibility_constraints: std::iter::Rev<VisibilityConstraintsIterator<'a>>,
+    definitions: BindingsIterator<'a>,
+    constraints: ConstraintsIterator<'a>,
+    visibility_constraints: VisibilityConstraintsIterator<'a>,
 }
 
 impl<'a> Iterator for BindingIdWithConstraintsIterator<'a> {
@@ -551,8 +571,8 @@ impl std::iter::FusedIterator for VisibilityConstraintIdIterator<'_> {}
 
 #[derive(Clone)]
 pub(super) struct DeclarationIdIterator<'a> {
-    inner: ReverseDeclarationsIterator<'a>,
-    visibility_constraints: std::iter::Rev<VisibilityConstraintsIterator<'a>>,
+    inner: DeclarationsIterator<'a>,
+    visibility_constraints: VisibilityConstraintsIterator<'a>,
 }
 
 impl<'a> Iterator for DeclarationIdIterator<'a> {
@@ -584,7 +604,7 @@ mod tests {
         assert_eq!(symbol.bindings.may_be_unbound, may_be_unbound);
         let mut actual = symbol
             .bindings()
-            .iter_rev()
+            .iter()
             .map(|def_id_with_constraints| {
                 format!(
                     "{}<{}>",
@@ -611,7 +631,7 @@ mod tests {
         assert_eq!(symbol.declarations.may_be_undeclared(), may_be_undeclared);
         let mut actual = symbol
             .declarations()
-            .iter_rev()
+            .iter()
             .map(|(d, _)| d.as_u32())
             .collect::<Vec<_>>();
         actual.reverse();
@@ -628,10 +648,7 @@ mod tests {
     #[test]
     fn with() {
         let mut sym = SymbolState::undefined();
-        sym.record_binding(
-            ScopedDefinitionId::from_u32(0),
-            &VisibilityConstraints::default(),
-        );
+        sym.record_binding(ScopedDefinitionId::from_u32(0));
 
         assert_bindings(&sym, false, &["0<>"]);
     }
@@ -639,10 +656,7 @@ mod tests {
     #[test]
     fn set_may_be_unbound() {
         let mut sym = SymbolState::undefined();
-        sym.record_binding(
-            ScopedDefinitionId::from_u32(0),
-            &VisibilityConstraints::default(),
-        );
+        sym.record_binding(ScopedDefinitionId::from_u32(0));
         sym.set_may_be_unbound();
 
         assert_bindings(&sym, true, &["0<>"]);
@@ -651,10 +665,7 @@ mod tests {
     #[test]
     fn record_constraint() {
         let mut sym = SymbolState::undefined();
-        sym.record_binding(
-            ScopedDefinitionId::from_u32(0),
-            &VisibilityConstraints::default(),
-        );
+        sym.record_binding(ScopedDefinitionId::from_u32(0));
         sym.record_constraint(ScopedConstraintId::from_u32(0));
 
         assert_bindings(&sym, false, &["0<0>"]);
@@ -664,17 +675,11 @@ mod tests {
     fn merge() {
         // merging the same definition with the same constraint keeps the constraint
         let mut sym0a = SymbolState::undefined();
-        sym0a.record_binding(
-            ScopedDefinitionId::from_u32(0),
-            &VisibilityConstraints::default(),
-        );
+        sym0a.record_binding(ScopedDefinitionId::from_u32(0));
         sym0a.record_constraint(ScopedConstraintId::from_u32(0));
 
         let mut sym0b = SymbolState::undefined();
-        sym0b.record_binding(
-            ScopedDefinitionId::from_u32(0),
-            &VisibilityConstraints::default(),
-        );
+        sym0b.record_binding(ScopedDefinitionId::from_u32(0));
         sym0b.record_constraint(ScopedConstraintId::from_u32(0));
 
         sym0a.merge(sym0b);
@@ -683,17 +688,11 @@ mod tests {
 
         // merging the same definition with differing constraints drops all constraints
         let mut sym1a = SymbolState::undefined();
-        sym1a.record_binding(
-            ScopedDefinitionId::from_u32(1),
-            &VisibilityConstraints::default(),
-        );
+        sym1a.record_binding(ScopedDefinitionId::from_u32(1));
         sym1a.record_constraint(ScopedConstraintId::from_u32(1));
 
         let mut sym1b = SymbolState::undefined();
-        sym1b.record_binding(
-            ScopedDefinitionId::from_u32(1),
-            &VisibilityConstraints::default(),
-        );
+        sym1b.record_binding(ScopedDefinitionId::from_u32(1));
         sym1b.record_constraint(ScopedConstraintId::from_u32(2));
 
         sym1a.merge(sym1b);
@@ -702,10 +701,7 @@ mod tests {
 
         // merging a constrained definition with unbound keeps both
         let mut sym2a = SymbolState::undefined();
-        sym2a.record_binding(
-            ScopedDefinitionId::from_u32(2),
-            &VisibilityConstraints::default(),
-        );
+        sym2a.record_binding(ScopedDefinitionId::from_u32(2));
         sym2a.record_constraint(ScopedConstraintId::from_u32(3));
 
         let sym2b = SymbolState::undefined();
@@ -730,10 +726,7 @@ mod tests {
     #[test]
     fn record_declaration() {
         let mut sym = SymbolState::undefined();
-        sym.record_declaration(
-            ScopedDefinitionId::from_u32(1),
-            &VisibilityConstraints::default(),
-        );
+        sym.record_declaration(ScopedDefinitionId::from_u32(1));
 
         assert_declarations(&sym, false, &[1]);
     }
@@ -741,14 +734,8 @@ mod tests {
     #[test]
     fn record_declaration_override() {
         let mut sym = SymbolState::undefined();
-        sym.record_declaration(
-            ScopedDefinitionId::from_u32(1),
-            &VisibilityConstraints::default(),
-        );
-        sym.record_declaration(
-            ScopedDefinitionId::from_u32(2),
-            &VisibilityConstraints::default(),
-        );
+        sym.record_declaration(ScopedDefinitionId::from_u32(1));
+        sym.record_declaration(ScopedDefinitionId::from_u32(2));
 
         assert_declarations(&sym, false, &[2]);
     }
@@ -756,16 +743,10 @@ mod tests {
     #[test]
     fn record_declaration_merge() {
         let mut sym = SymbolState::undefined();
-        sym.record_declaration(
-            ScopedDefinitionId::from_u32(1),
-            &VisibilityConstraints::default(),
-        );
+        sym.record_declaration(ScopedDefinitionId::from_u32(1));
 
         let mut sym2 = SymbolState::undefined();
-        sym2.record_declaration(
-            ScopedDefinitionId::from_u32(2),
-            &VisibilityConstraints::default(),
-        );
+        sym2.record_declaration(ScopedDefinitionId::from_u32(2));
 
         sym.merge(sym2);
 
@@ -775,10 +756,7 @@ mod tests {
     #[test]
     fn record_declaration_merge_partial_undeclared() {
         let mut sym = SymbolState::undefined();
-        sym.record_declaration(
-            ScopedDefinitionId::from_u32(1),
-            &VisibilityConstraints::default(),
-        );
+        sym.record_declaration(ScopedDefinitionId::from_u32(1));
 
         let sym2 = SymbolState::undefined();
 
@@ -790,10 +768,7 @@ mod tests {
     #[test]
     fn set_may_be_undeclared() {
         let mut sym = SymbolState::undefined();
-        sym.record_declaration(
-            ScopedDefinitionId::from_u32(0),
-            &VisibilityConstraints::default(),
-        );
+        sym.record_declaration(ScopedDefinitionId::from_u32(0));
         sym.set_may_be_undeclared();
 
         assert_declarations(&sym, true, &[0]);

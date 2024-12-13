@@ -242,8 +242,7 @@ if flag():
 elif True:
     x = 3
 
-# TODO: This should be Literal[2, 3]
-reveal_type(x)  # revealed: Literal[1, 2, 3]
+reveal_type(x)  # revealed: Literal[2, 3]
 ```
 
 ### Nested conditionals
@@ -305,8 +304,7 @@ if flag():
 else:
     x = 3
 
-# TODO: This should be Literal[2, 3]
-reveal_type(x)  # revealed: Literal[1, 2, 3]
+reveal_type(x)  # revealed: Literal[2, 3]
 ```
 
 #### `if True` inside `if False` ... `else`
@@ -575,8 +573,7 @@ for _ in iterable():
     if True:
         x = 3
 
-# TODO: This should be Literal[1, 3]
-reveal_type(x)  # revealed: Literal[1, 2, 3]
+reveal_type(x)  # revealed: Literal[1, 3]
 ```
 
 ##### `if True` inside `for` ... `else`

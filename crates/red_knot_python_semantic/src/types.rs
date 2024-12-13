@@ -276,15 +276,10 @@ fn definition_expression_ty<'db>(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Visibility<'db> {
     Invisible,
-    Transparent(Type<'db>),
-    Opaque(Type<'db>),
+    Visible(Type<'db>),
 }
 
 impl<'db> Visibility<'db> {
-    fn is_not_opaque(&self) -> bool {
-        !matches!(self, Visibility::Opaque(_))
-    }
-
     fn is_invisible(&self) -> bool {
         matches!(self, Visibility::Invisible)
     }
@@ -292,7 +287,7 @@ impl<'db> Visibility<'db> {
     fn unwrap_or_never(self) -> Type<'db> {
         match self {
             Visibility::Invisible => Type::Never,
-            Visibility::Transparent(ty) | Visibility::Opaque(ty) => ty,
+            Visibility::Visible(ty) => ty,
         }
     }
 }
@@ -304,44 +299,41 @@ fn bindings_ty<'db>(
     db: &'db dyn Db,
     bindings_with_constraints: BindingWithConstraintsIterator<'_, 'db>,
 ) -> Option<Type<'db>> {
-    let types = bindings_with_constraints
-        .map(
-            |BindingWithConstraints {
-                 binding,
-                 constraints,
-                 visibility_constraints,
-             }| {
-                let result = StaticTruthiness::analyze(db, visibility_constraints);
+    let types = bindings_with_constraints.map(
+        |BindingWithConstraints {
+             binding,
+             constraints,
+             visibility_constraints,
+         }| {
+            // dbg!("====");
+            let result = StaticTruthiness::analyze(db, visibility_constraints);
+            // dbg!(&result);
 
-                if result.any_always_false {
-                    Visibility::Invisible
+            if result.any_always_false {
+                Visibility::Invisible
+            } else {
+                let mut constraint_tys = constraints
+                    .filter_map(|constraint| narrowing_constraint(db, constraint, binding))
+                    .peekable();
+
+                let binding_ty = binding_ty(db, binding);
+                let ty = if constraint_tys.peek().is_some() {
+                    let intersection_ty = constraint_tys
+                        .fold(
+                            IntersectionBuilder::new(db).add_positive(binding_ty),
+                            IntersectionBuilder::add_positive,
+                        )
+                        .build();
+                    intersection_ty
                 } else {
-                    let mut constraint_tys = constraints
-                        .filter_map(|constraint| narrowing_constraint(db, constraint, binding))
-                        .peekable();
+                    binding_ty
+                };
 
-                    let binding_ty = binding_ty(db, binding);
-                    let ty = if constraint_tys.peek().is_some() {
-                        let intersection_ty = constraint_tys
-                            .fold(
-                                IntersectionBuilder::new(db).add_positive(binding_ty),
-                                IntersectionBuilder::add_positive,
-                            )
-                            .build();
-                        intersection_ty
-                    } else {
-                        binding_ty
-                    };
-
-                    if result.at_least_one_constraint && result.all_always_true {
-                        Visibility::Opaque(ty)
-                    } else {
-                        Visibility::Transparent(ty)
-                    }
-                }
-            },
-        )
-        .take_while_inclusive(Visibility::is_not_opaque);
+                // if result.at_least_one_constraint && result.all_always_true {
+                Visibility::Visible(ty)
+            }
+        },
+    );
 
     // TODO: try to get rid of the `collect` here
     let types: Vec<_> = types.collect();
@@ -351,7 +343,7 @@ fn bindings_ty<'db>(
         return Some(Type::Unknown);
     }
 
-    let mut types = types.iter().map(|v| v.unwrap_or_never()).rev();
+    let mut types = types.iter().map(|v| v.unwrap_or_never());
 
     if let Some(first) = types.next() {
         if let Some(second) = types.next() {
@@ -395,19 +387,15 @@ fn declarations_ty<'db>(
             if result.any_always_false {
                 Visibility::Invisible
             } else {
-                if result.at_least_one_constraint && result.all_always_true {
-                    Visibility::Opaque(declaration_ty(db, declaration))
-                } else {
-                    Visibility::Transparent(declaration_ty(db, declaration))
-                }
+                // if result.at_least_one_constraint && result.all_always_true {
+                Visibility::Visible(declaration_ty(db, declaration))
             }
         })
-        .take_while_inclusive(Visibility::is_not_opaque)
         .map(Visibility::unwrap_or_never);
 
     // TODO: try to get rid of the `collect` here (see above)
     let types: Vec<_> = types.collect();
-    let types = types.into_iter().rev();
+    let types = types.into_iter();
 
     let mut all_types = undeclared_ty.into_iter().chain(types);
 

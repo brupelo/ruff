@@ -229,7 +229,7 @@ use crate::semantic_index::ast_ids::ScopedUseId;
 use crate::semantic_index::definition::Definition;
 use crate::semantic_index::symbol::ScopedSymbolId;
 use crate::semantic_index::use_def::symbol_state::{
-    ScopedVisibilityConstraintId, VisibilityConstraintIdIterator, VisibilityConstraints,
+    ScopedVisibilityConstraintId, VisibilityConstraintIdIterator,
 };
 use crate::semantic_index::visibility_constraint::VisibilityConstraint;
 use crate::symbol::Boundness;
@@ -355,7 +355,7 @@ impl<'db> UseDefMap<'db> {
             all_definitions: &self.all_definitions,
             all_constraints: &self.all_constraints,
             all_visibility_constraints: &self.all_visibility_constraints,
-            inner: bindings.iter_rev(),
+            inner: bindings.iter(),
         }
     }
 
@@ -366,7 +366,7 @@ impl<'db> UseDefMap<'db> {
         DeclarationsIterator {
             all_definitions: &self.all_definitions,
             all_visibility_constraints: &self.all_visibility_constraints,
-            inner: declarations.iter_rev(),
+            inner: declarations.iter(),
             may_be_undeclared: declarations.may_be_undeclared(),
         }
     }
@@ -502,10 +502,6 @@ pub(super) struct FlowSnapshot {
     symbol_states: IndexVec<ScopedSymbolId, SymbolState>,
 }
 
-/// A snapshot of the active visibility constraints at a particular point in control flow.
-#[derive(Clone, Debug)]
-pub(super) struct VisibilityConstraintSnapshot(VisibilityConstraints);
-
 #[derive(Debug, Default)]
 pub(super) struct UseDefMapBuilder<'db> {
     /// Append-only array of [`Definition`].
@@ -516,9 +512,6 @@ pub(super) struct UseDefMapBuilder<'db> {
 
     /// Append-only array of [`VisibilityConstraint`].
     all_visibility_constraints: IndexVec<ScopedVisibilityConstraintId, VisibilityConstraint<'db>>,
-
-    /// TODO
-    active_visibility_constraints: VisibilityConstraints,
 
     /// Live bindings at each so-far-recorded use.
     bindings_by_use: IndexVec<ScopedUseId, SymbolBindings>,
@@ -543,7 +536,7 @@ impl<'db> UseDefMapBuilder<'db> {
             binding,
             SymbolDefinitions::Declarations(symbol_state.declarations().clone()),
         );
-        symbol_state.record_binding(def_id, &self.active_visibility_constraints);
+        symbol_state.record_binding(def_id);
     }
 
     pub(super) fn record_constraint(&mut self, constraint: Constraint<'db>) {
@@ -551,20 +544,13 @@ impl<'db> UseDefMapBuilder<'db> {
         for state in &mut self.symbol_states {
             state.record_constraint(constraint_id);
         }
-
-        self.record_visibility_constraint(VisibilityConstraint::Constraint(constraint));
-    }
-
-    /// Marks a point in control-flow where we branch on a condition that we can not (or choose
-    /// not to) analyze statically. Examples are `try` blocks or `for` loops.
-    pub(super) fn record_ambiguous_branching(&mut self) {
-        self.record_visibility_constraint(VisibilityConstraint::Ambiguous);
     }
 
     pub(super) fn record_visibility_constraint(&mut self, condition: VisibilityConstraint<'db>) {
-        let condition_id = self.all_visibility_constraints.push(condition);
-        self.active_visibility_constraints
-            .insert(condition_id.as_u32());
+        let constraint_id = self.all_visibility_constraints.push(condition);
+        for state in &mut self.symbol_states {
+            state.record_visibility_constraint(constraint_id);
+        }
     }
 
     pub(super) fn record_declaration(
@@ -578,7 +564,7 @@ impl<'db> UseDefMapBuilder<'db> {
             declaration,
             SymbolDefinitions::Bindings(symbol_state.bindings().clone()),
         );
-        symbol_state.record_declaration(def_id, &self.active_visibility_constraints);
+        symbol_state.record_declaration(def_id);
     }
 
     pub(super) fn record_declaration_and_binding(
@@ -589,8 +575,8 @@ impl<'db> UseDefMapBuilder<'db> {
         // We don't need to store anything in self.definitions_by_definition.
         let def_id = self.all_definitions.push(definition);
         let symbol_state = &mut self.symbol_states[symbol];
-        symbol_state.record_declaration(def_id, &self.active_visibility_constraints);
-        symbol_state.record_binding(def_id, &self.active_visibility_constraints);
+        symbol_state.record_declaration(def_id);
+        symbol_state.record_binding(def_id);
     }
 
     pub(super) fn record_use(&mut self, symbol: ScopedSymbolId, use_id: ScopedUseId) {
@@ -609,10 +595,6 @@ impl<'db> UseDefMapBuilder<'db> {
         }
     }
 
-    pub(super) fn visibility_constraints_snapshot(&self) -> VisibilityConstraintSnapshot {
-        VisibilityConstraintSnapshot(self.active_visibility_constraints.clone())
-    }
-
     /// Restore the current builder symbols state to the given snapshot.
     pub(super) fn restore(&mut self, snapshot: FlowSnapshot) {
         // We never remove symbols from `symbol_states` (it's an IndexVec, and the symbol
@@ -629,13 +611,6 @@ impl<'db> UseDefMapBuilder<'db> {
         // snapshot, the correct state to fill them in with is "undefined".
         self.symbol_states
             .resize(num_symbols, SymbolState::undefined());
-    }
-
-    pub(super) fn restore_visibility_constraints(
-        &mut self,
-        snapshot: VisibilityConstraintSnapshot,
-    ) {
-        self.active_visibility_constraints = snapshot.0;
     }
 
     /// Merge the given snapshot into the current state, reflecting that we might have taken either

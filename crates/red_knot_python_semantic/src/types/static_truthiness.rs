@@ -49,8 +49,9 @@ impl StaticTruthiness {
             at_least_one_constraint: false,
         };
 
-        for condition in visibility_constraints {
-            let truthiness = match condition {
+        for constraint in visibility_constraints {
+            // dbg!(constraint);
+            let truthiness = match constraint {
                 VisibilityConstraint::Constraint(Constraint {
                     node: ConstraintNode::Expression(test_expr),
                     is_positive,
@@ -91,8 +92,9 @@ impl StaticTruthiness {
                         Truthiness::Ambiguous
                     }
                 },
-                VisibilityConstraint::Ambiguous => Truthiness::Ambiguous,
             };
+
+            // dbg!(truthiness);
 
             result.any_always_false |= truthiness.is_always_false();
             result.all_always_true &= truthiness.is_always_true();

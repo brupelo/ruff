@@ -27,5 +27,4 @@ use super::constraint::Constraint;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum VisibilityConstraint<'db> {
     Constraint(Constraint<'db>),
-    Ambiguous,
 }
