@@ -24,7 +24,9 @@ use crate::semantic_index::symbol::{
     FileScopeId, NodeWithScopeKey, NodeWithScopeRef, Scope, ScopeId, ScopedSymbolId,
     SymbolTableBuilder,
 };
-use crate::semantic_index::use_def::{BranchingConditionsSnapshot, FlowSnapshot, UseDefMapBuilder};
+use crate::semantic_index::use_def::{
+    FlowSnapshot, UseDefMapBuilder, VisibilityConstraintSnapshot,
+};
 use crate::semantic_index::SemanticIndex;
 use crate::unpack::Unpack;
 use crate::Db;
@@ -201,28 +203,28 @@ impl<'db> SemanticIndexBuilder<'db> {
         self.current_use_def_map().snapshot()
     }
 
-    fn branching_conditions_snapshot(&self) -> BranchingConditionsSnapshot {
-        self.current_use_def_map().branching_conditions_snapshot()
+    fn visibility_constraints_snapshot(&self) -> VisibilityConstraintSnapshot {
+        self.current_use_def_map().visibility_constraints_snapshot()
     }
 
     fn flow_restore(
         &mut self,
         state: FlowSnapshot,
-        branching_conditions: BranchingConditionsSnapshot,
+        visibility_constraints: VisibilityConstraintSnapshot,
     ) {
         self.current_use_def_map_mut().restore(state);
         self.current_use_def_map_mut()
-            .restore_branching_conditions(branching_conditions);
+            .restore_visibility_constraints(visibility_constraints);
     }
 
     fn flow_merge(
         &mut self,
         state: FlowSnapshot,
-        branching_conditions: BranchingConditionsSnapshot,
+        visibility_constraints: VisibilityConstraintSnapshot,
     ) {
         self.current_use_def_map_mut().merge(state);
         self.current_use_def_map_mut()
-            .restore_branching_conditions(branching_conditions);
+            .restore_visibility_constraints(visibility_constraints);
     }
 
     fn add_symbol(&mut self, name: Name) -> ScopedSymbolId {
@@ -808,7 +810,7 @@ where
             ast::Stmt::If(node) => {
                 self.visit_expr(&node.test);
                 let pre_if = self.flow_snapshot();
-                let pre_if_conditions = self.branching_conditions_snapshot();
+                let pre_if_conditions = self.visibility_constraints_snapshot();
                 let constraint = self.record_expression_constraint(&node.test);
                 let mut constraints = vec![constraint];
                 self.visit_body(&node.body);
@@ -857,7 +859,7 @@ where
                 self.visit_expr(test);
 
                 let pre_loop = self.flow_snapshot();
-                let pre_loop_conditions = self.branching_conditions_snapshot();
+                let pre_loop_conditions = self.visibility_constraints_snapshot();
                 let constraint = self.record_expression_constraint(test);
 
                 // Save aside any break states from an outer loop
@@ -927,7 +929,7 @@ where
                 self.visit_expr(iter);
 
                 let pre_loop = self.flow_snapshot();
-                let pre_loop_conditions = self.branching_conditions_snapshot();
+                let pre_loop_conditions = self.visibility_constraints_snapshot();
                 let saved_break_states = std::mem::take(&mut self.loop_break_states);
 
                 self.record_ambiguous_branching();
@@ -969,7 +971,7 @@ where
                 self.visit_expr(subject);
 
                 let after_subject = self.flow_snapshot();
-                let after_subject_cs = self.branching_conditions_snapshot();
+                let after_subject_cs = self.visibility_constraints_snapshot();
                 let Some((first, remaining)) = cases.split_first() else {
                     return;
                 };
@@ -1008,7 +1010,7 @@ where
                 // We will merge this state with all of the intermediate
                 // states during the `try` block before visiting those suites.
                 let pre_try_block_state = self.flow_snapshot();
-                let pre_try_block_conditions = self.branching_conditions_snapshot();
+                let pre_try_block_conditions = self.visibility_constraints_snapshot();
 
                 self.record_ambiguous_branching();
 
@@ -1114,7 +1116,7 @@ where
                 self.visit_body(finalbody);
 
                 self.current_use_def_map_mut()
-                    .restore_branching_conditions(pre_try_block_conditions);
+                    .restore_visibility_constraints(pre_try_block_conditions);
             }
             _ => {
                 walk_stmt(self, stmt);
@@ -1258,7 +1260,7 @@ where
             }) => {
                 self.visit_expr(test);
                 let pre_if = self.flow_snapshot();
-                let pre_if_conditions = self.branching_conditions_snapshot();
+                let pre_if_conditions = self.visibility_constraints_snapshot();
                 let constraint = self.record_expression_constraint(test);
                 self.visit_expr(body);
                 let post_body = self.flow_snapshot();
@@ -1324,7 +1326,7 @@ where
                 op,
             }) => {
                 let mut snapshots = vec![];
-                let pre_op_conditions = self.branching_conditions_snapshot();
+                let pre_op_conditions = self.visibility_constraints_snapshot();
                 for (index, value) in values.iter().enumerate() {
                     self.visit_expr(value);
                     // In the last value we don't need to take a snapshot nor add a constraint

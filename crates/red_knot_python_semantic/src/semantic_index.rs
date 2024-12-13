@@ -20,17 +20,17 @@ use crate::semantic_index::use_def::UseDefMap;
 use crate::Db;
 
 pub mod ast_ids;
-pub(crate) mod branching_condition;
 mod builder;
 pub(crate) mod constraint;
 pub mod definition;
 pub mod expression;
 pub mod symbol;
 mod use_def;
+pub(crate) mod visibility_constraint;
 
 pub(crate) use self::use_def::{
-    BindingWithConstraints, BindingWithConstraintsIterator, BranchingConditionsIterator,
-    DeclarationsIterator,
+    BindingWithConstraints, BindingWithConstraintsIterator, DeclarationsIterator,
+    VisibilityConstraintIterator,
 };
 
 type SymbolMap = hashbrown::HashMap<ScopedSymbolId, (), FxBuildHasher>;

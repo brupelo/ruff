@@ -309,9 +309,9 @@ fn bindings_ty<'db>(
             |BindingWithConstraints {
                  binding,
                  constraints,
-                 branching_conditions,
+                 visibility_constraints,
              }| {
-                let result = StaticTruthiness::analyze(db, branching_conditions);
+                let result = StaticTruthiness::analyze(db, visibility_constraints);
 
                 if result.any_always_false {
                     Visibility::Invisible
@@ -333,7 +333,7 @@ fn bindings_ty<'db>(
                         binding_ty
                     };
 
-                    if result.at_least_one_condition && result.all_always_true {
+                    if result.at_least_one_constraint && result.all_always_true {
                         Visibility::Opaque(ty)
                     } else {
                         Visibility::Transparent(ty)
@@ -389,13 +389,13 @@ fn declarations_ty<'db>(
     undeclared_ty: Option<Type<'db>>,
 ) -> DeclaredTypeResult<'db> {
     let types = declarations
-        .map(|(declaration, branching_conditions)| {
-            let result = StaticTruthiness::analyze(db, branching_conditions);
+        .map(|(declaration, visibility_constraints)| {
+            let result = StaticTruthiness::analyze(db, visibility_constraints);
 
             if result.any_always_false {
                 Visibility::Invisible
             } else {
-                if result.at_least_one_condition && result.all_always_true {
+                if result.at_least_one_constraint && result.all_always_true {
                     Visibility::Opaque(declaration_ty(db, declaration))
                 } else {
                     Visibility::Transparent(declaration_ty(db, declaration))

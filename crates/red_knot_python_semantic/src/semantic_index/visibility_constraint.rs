@@ -1,5 +1,7 @@
 use super::constraint::Constraint;
 
+/// TODO
+///
 /// Used to represent active branching conditions that apply to a particular definition.
 /// A definition can either be conditional on a specific constraint from a `if`, `elif`,
 /// `while` statement, an `if`-expression, or a Boolean expression. Or it can be marked
@@ -9,21 +11,21 @@ use super::constraint::Constraint;
 ///
 /// For example:
 /// ```py
-/// a = 1  # no active branching conditions
+/// a = 1  # no visibility constraints
 ///
 /// if test1:
-///     b = 1  # ConditionalOn(test1)
+///     b = 1  # Constraint(test1)
 ///
 ///     if test2:
-///         c = 1  # ConditionalOn(test1), ConditionalOn(test2)
+///         c = 1  # Constraint(test1), Constraint(test2)
 ///
 ///     for _ in range(10):
-///         d = 1  # ConditionalOn(test1), Ambiguous
+///         d = 1  # Constraint(test1), Ambiguous
 /// else:
-///    d = 1  # ConditionalOn(~test1)
+///    d = 1  # Constraint(~test1)
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum BranchingCondition<'db> {
-    ConditionalOn(Constraint<'db>),
+pub(crate) enum VisibilityConstraint<'db> {
+    Constraint(Constraint<'db>),
     Ambiguous,
 }

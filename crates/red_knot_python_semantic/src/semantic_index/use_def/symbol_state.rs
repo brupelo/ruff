@@ -55,9 +55,9 @@ pub(super) struct ScopedDefinitionId;
 #[newtype_index]
 pub(super) struct ScopedConstraintId;
 
-/// A newtype-index for a [`crate::semantic_index::branching_condition::BranchingCondition`] in a particular scope.
+/// A newtype-index for a [`crate::semantic_index::visibility_constraint::VisibilityConstraint`] in a particular scope.
 #[newtype_index]
-pub(super) struct ScopedBranchingConditionId;
+pub(super) struct ScopedVisibilityConstraintId;
 
 /// Can reference this * 64 total definitions inline; more will fall back to the heap.
 const INLINE_BINDING_BLOCKS: usize = 3;
@@ -91,15 +91,15 @@ type ConstraintsPerBinding = SmallVec<InlineConstraintArray>;
 type ConstraintsIterator<'a> = std::slice::Iter<'a, Constraints>;
 type ConstraintsIntoIterator = smallvec::IntoIter<InlineConstraintArray>;
 
-/// Similar to what we have for constraints, but for active branching conditions.
-const INLINE_BRANCHING_BLOCKS: usize = 2;
-const INLINE_BRANCHING_CONDITIONS: usize = 4;
-pub(super) type BranchingConditions = BitSet<INLINE_BRANCHING_BLOCKS>;
-type InlineBranchingConditionsArray = [BranchingConditions; INLINE_BRANCHING_CONDITIONS];
-/// One [`BitSet`] of active [`ScopedBranchingConditionId`]s per live binding.
-type BranchingConditionsPerBinding = SmallVec<InlineBranchingConditionsArray>;
-type BranchingConditionsIterator<'a> = std::slice::Iter<'a, BranchingConditions>;
-type BranchingConditionsIntoIterator = smallvec::IntoIter<InlineBranchingConditionsArray>;
+/// Similar to what we have above, but for visibility constraints.
+const INLINE_VISIBILITY_CONSTRAINT_BLOCKS: usize = 2;
+const INLINE_VISIBILITY_CONSTRAINTS: usize = 4;
+pub(super) type VisibilityConstraints = BitSet<INLINE_VISIBILITY_CONSTRAINT_BLOCKS>;
+type InlineVisibilityConstraintsArray = [VisibilityConstraints; INLINE_VISIBILITY_CONSTRAINTS];
+/// One [`BitSet`] of active [`ScopedVisibilityConstraintId`]s per live binding.
+type VisibilityConstraintPerBinding = SmallVec<InlineVisibilityConstraintsArray>;
+type VisibilityConstraintsIterator<'a> = std::slice::Iter<'a, VisibilityConstraints>;
+type VisibilityConstraintsIntoIterator = smallvec::IntoIter<InlineVisibilityConstraintsArray>;
 
 /// Live declarations for a single symbol at some point in control flow.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -107,8 +107,8 @@ pub(super) struct SymbolDeclarations {
     /// [`BitSet`]: which declarations (as [`ScopedDefinitionId`]) can reach the current location?
     live_declarations: Declarations,
 
-    /// For each live declaration, which [`BranchingConditions`] were active at that declaration?
-    branching_conditions: BranchingConditionsPerBinding,
+    /// For each live declaration, which [`VisibilityConstraints`] were active at that declaration?
+    visibility_constraints: VisibilityConstraintPerBinding,
 
     /// Could the symbol be un-declared at this point?
     may_be_undeclared: bool,
@@ -118,7 +118,7 @@ impl SymbolDeclarations {
     fn undeclared() -> Self {
         Self {
             live_declarations: Declarations::default(),
-            branching_conditions: BranchingConditionsPerBinding::default(),
+            visibility_constraints: VisibilityConstraintPerBinding::default(),
             may_be_undeclared: true,
         }
     }
@@ -127,16 +127,16 @@ impl SymbolDeclarations {
     fn record_declaration(
         &mut self,
         declaration_id: ScopedDefinitionId,
-        branching_conditions: &BranchingConditions,
+        visibility_constraints: &VisibilityConstraints,
     ) {
         self.live_declarations = Declarations::with(declaration_id.into());
         self.may_be_undeclared = false;
 
-        self.branching_conditions = BranchingConditionsPerBinding::with_capacity(1);
-        self.branching_conditions
-            .push(BranchingConditions::default());
-        for active_constraint_id in branching_conditions.iter() {
-            self.branching_conditions[0].insert(active_constraint_id);
+        self.visibility_constraints = VisibilityConstraintPerBinding::with_capacity(1);
+        self.visibility_constraints
+            .push(VisibilityConstraints::default());
+        for active_constraint_id in visibility_constraints.iter() {
+            self.visibility_constraints[0].insert(active_constraint_id);
         }
     }
 
@@ -149,7 +149,7 @@ impl SymbolDeclarations {
     pub(super) fn iter_rev(&self) -> DeclarationIdIterator {
         DeclarationIdIterator {
             inner: self.live_declarations.iter_rev(),
-            branching_conditions: self.branching_conditions.iter().rev(),
+            visibility_constraints: self.visibility_constraints.iter().rev(),
         }
     }
 
@@ -170,8 +170,8 @@ pub(super) struct SymbolBindings {
     /// binding in `live_bindings`.
     constraints: ConstraintsPerBinding,
 
-    /// For each live binding, which [`BranchingConditions`] were active at that binding?
-    branching_conditions: BranchingConditionsPerBinding,
+    /// For each live binding, which [`VisibilityConstraints`] were active at that binding?
+    visibility_constraints: VisibilityConstraintPerBinding,
 
     /// Could the symbol be unbound at this point?
     may_be_unbound: bool,
@@ -182,7 +182,7 @@ impl SymbolBindings {
         Self {
             live_bindings: Bindings::default(),
             constraints: ConstraintsPerBinding::default(),
-            branching_conditions: BranchingConditionsPerBinding::default(),
+            visibility_constraints: VisibilityConstraintPerBinding::default(),
             may_be_unbound: true,
         }
     }
@@ -196,7 +196,7 @@ impl SymbolBindings {
     pub(super) fn record_binding(
         &mut self,
         binding_id: ScopedDefinitionId,
-        branching_conditions: &BranchingConditions,
+        visibility_constraints: &VisibilityConstraints,
     ) {
         // The new binding replaces all previous live bindings in this path, and has no
         // constraints.
@@ -204,11 +204,11 @@ impl SymbolBindings {
         self.constraints = ConstraintsPerBinding::with_capacity(1);
         self.constraints.push(Constraints::default());
 
-        self.branching_conditions = BranchingConditionsPerBinding::with_capacity(1);
-        self.branching_conditions
-            .push(BranchingConditions::default());
-        for id in branching_conditions.iter() {
-            self.branching_conditions[0].insert(id);
+        self.visibility_constraints = VisibilityConstraintPerBinding::with_capacity(1);
+        self.visibility_constraints
+            .push(VisibilityConstraints::default());
+        for id in visibility_constraints.iter() {
+            self.visibility_constraints[0].insert(id);
         }
         self.may_be_unbound = false;
     }
@@ -225,7 +225,7 @@ impl SymbolBindings {
         BindingIdWithConstraintsIterator {
             definitions: self.live_bindings.iter_rev(),
             constraints: self.constraints.iter().rev(),
-            branching_conditions: self.branching_conditions.iter().rev(),
+            visibility_constraints: self.visibility_constraints.iter().rev(),
         }
     }
 
@@ -258,10 +258,10 @@ impl SymbolState {
     pub(super) fn record_binding(
         &mut self,
         binding_id: ScopedDefinitionId,
-        branching_conditions: &BranchingConditions,
+        visibility_constraintss: &VisibilityConstraints,
     ) {
         self.bindings
-            .record_binding(binding_id, branching_conditions);
+            .record_binding(binding_id, visibility_constraintss);
     }
 
     /// Add given constraint to all live bindings.
@@ -278,10 +278,10 @@ impl SymbolState {
     pub(super) fn record_declaration(
         &mut self,
         declaration_id: ScopedDefinitionId,
-        branching_conditions: &BranchingConditions,
+        visibility_constraints: &VisibilityConstraints,
     ) {
         self.declarations
-            .record_declaration(declaration_id, branching_conditions);
+            .record_declaration(declaration_id, visibility_constraints);
     }
 
     /// Merge another [`SymbolState`] into this one.
@@ -290,12 +290,12 @@ impl SymbolState {
             bindings: SymbolBindings {
                 live_bindings: Bindings::default(),
                 constraints: ConstraintsPerBinding::default(),
-                branching_conditions: BranchingConditionsPerBinding::default(),
+                visibility_constraints: VisibilityConstraintPerBinding::default(),
                 may_be_unbound: self.bindings.may_be_unbound || b.bindings.may_be_unbound,
             },
             declarations: SymbolDeclarations {
                 live_declarations: self.declarations.live_declarations.clone(),
-                branching_conditions: BranchingConditionsPerBinding::default(),
+                visibility_constraints: VisibilityConstraintPerBinding::default(),
                 may_be_undeclared: self.declarations.may_be_undeclared
                     || b.declarations.may_be_undeclared,
             },
@@ -307,8 +307,8 @@ impl SymbolState {
         let mut b_defs_iter = b.bindings.live_bindings.iter();
         let mut a_constraints_iter = a.bindings.constraints.into_iter();
         let mut b_constraints_iter = b.bindings.constraints.into_iter();
-        let mut a_conditions_iter = a.bindings.branching_conditions.into_iter();
-        let mut b_conditions_iter = b.bindings.branching_conditions.into_iter();
+        let mut a_conditions_iter = a.bindings.visibility_constraints.into_iter();
+        let mut b_conditions_iter = b.bindings.visibility_constraints.into_iter();
 
         let mut opt_a_def: Option<u32> = a_defs_iter.next();
         let mut opt_b_def: Option<u32> = b_defs_iter.next();
@@ -322,7 +322,7 @@ impl SymbolState {
         // Helper to push `def`, with constraints in `constraints_iter`, onto `self`.
         let push = |def,
                     constraints_iter: &mut ConstraintsIntoIterator,
-                    branching_conditions_iter: &mut BranchingConditionsIntoIterator,
+                    visibility_constraints_iter: &mut VisibilityConstraintsIntoIterator,
                     merged: &mut Self| {
             merged.bindings.live_bindings.insert(def);
             // SAFETY: we only ever create SymbolState with either no definitions and no constraint
@@ -333,14 +333,14 @@ impl SymbolState {
             let constraints = constraints_iter
                 .next()
                 .expect("definitions and constraints length mismatch");
-            let branching_conditions = branching_conditions_iter
+            let visibility_constraints = visibility_constraints_iter
                 .next()
-                .expect("definitions and branching_conditions length mismatch");
+                .expect("definitions and visibility_constraints length mismatch");
             merged.bindings.constraints.push(constraints);
             merged
                 .bindings
-                .branching_conditions
-                .push(branching_conditions);
+                .visibility_constraints
+                .push(visibility_constraints);
         };
 
         loop {
@@ -367,10 +367,10 @@ impl SymbolState {
                         let a_constraints = a_constraints_iter
                             .next()
                             .expect("definitions and constraints length mismatch");
-                        // SAFETY: The same is true for branching_conditions.
+                        // SAFETY: The same is true for visibility_constraints.
                         a_conditions_iter
                             .next()
-                            .expect("branching_conditions length mismatch");
+                            .expect("visibility_constraints length mismatch");
                         // If the same definition is visible through both paths, any constraint
                         // that applies on only one path is irrelevant to the resulting type from
                         // unioning the two paths, so we intersect the constraints.
@@ -400,19 +400,19 @@ impl SymbolState {
         // Same as above, but for declarations.
         let mut a_decls_iter = a.declarations.live_declarations.iter();
         let mut b_decls_iter = b.declarations.live_declarations.iter();
-        let mut a_conditions_iter = a.declarations.branching_conditions.into_iter();
-        let mut b_conditions_iter = b.declarations.branching_conditions.into_iter();
+        let mut a_conditions_iter = a.declarations.visibility_constraints.into_iter();
+        let mut b_conditions_iter = b.declarations.visibility_constraints.into_iter();
 
         let mut opt_a_decl: Option<u32> = a_decls_iter.next();
         let mut opt_b_decl: Option<u32> = b_decls_iter.next();
 
         let push =
-            |decl, conditions_iter: &mut BranchingConditionsIntoIterator, merged: &mut Self| {
+            |decl, conditions_iter: &mut VisibilityConstraintsIntoIterator, merged: &mut Self| {
                 merged.declarations.live_declarations.insert(decl);
                 let conditions = conditions_iter
                     .next()
-                    .expect("declarations and branching_conditions length mismatch");
-                merged.declarations.branching_conditions.push(conditions);
+                    .expect("declarations and visibility_constraints length mismatch");
+                merged.declarations.visibility_constraints.push(conditions);
             };
 
         loop {
@@ -430,11 +430,11 @@ impl SymbolState {
                         std::cmp::Ordering::Equal => {
                             push(a_decl, &mut b_conditions_iter, self);
                             self.declarations
-                                .branching_conditions
+                                .visibility_constraints
                                 .last_mut()
-                                .expect("declarations and branching_conditions length mismatch")
+                                .expect("declarations and visibility_constraints length mismatch")
                                 .intersect(&a_conditions_iter.next().expect(
-                                    "declarations and branching_conditions length mismatch",
+                                    "declarations and visibility_constraints length mismatch",
                                 ));
 
                             opt_a_decl = a_decls_iter.next();
@@ -478,14 +478,14 @@ impl Default for SymbolState {
 pub(super) struct BindingIdWithConstraints<'a> {
     pub(super) definition: ScopedDefinitionId,
     pub(super) constraint_ids: ConstraintIdIterator<'a>,
-    pub(super) branching_conditions_ids: BranchingConditionIdIterator<'a>,
+    pub(super) visibility_constraints_ids: VisibilityConstraintIdIterator<'a>,
 }
 
 #[derive(Debug)]
 pub(super) struct BindingIdWithConstraintsIterator<'a> {
     definitions: ReverseBindingsIterator<'a>,
     constraints: std::iter::Rev<ConstraintsIterator<'a>>,
-    branching_conditions: std::iter::Rev<BranchingConditionsIterator<'a>>,
+    visibility_constraints: std::iter::Rev<VisibilityConstraintsIterator<'a>>,
 }
 
 impl<'a> Iterator for BindingIdWithConstraintsIterator<'a> {
@@ -495,17 +495,17 @@ impl<'a> Iterator for BindingIdWithConstraintsIterator<'a> {
         match (
             self.definitions.next(),
             self.constraints.next(),
-            self.branching_conditions.next(),
+            self.visibility_constraints.next(),
         ) {
             (None, None, None) => None,
-            (Some(def), Some(constraints), Some(branching_conditions)) => {
+            (Some(def), Some(constraints), Some(visibility_constraints)) => {
                 Some(BindingIdWithConstraints {
                     definition: ScopedDefinitionId::from_u32(def),
                     constraint_ids: ConstraintIdIterator {
                         wrapped: constraints.iter(),
                     },
-                    branching_conditions_ids: BranchingConditionIdIterator {
-                        wrapped: branching_conditions.iter(),
+                    visibility_constraints_ids: VisibilityConstraintIdIterator {
+                        wrapped: visibility_constraints.iter(),
                     },
                 })
             }
@@ -533,42 +533,42 @@ impl Iterator for ConstraintIdIterator<'_> {
 impl std::iter::FusedIterator for ConstraintIdIterator<'_> {}
 
 #[derive(Debug)]
-pub(super) struct BranchingConditionIdIterator<'a> {
-    wrapped: BitSetIterator<'a, INLINE_BRANCHING_BLOCKS>,
+pub(super) struct VisibilityConstraintIdIterator<'a> {
+    wrapped: BitSetIterator<'a, INLINE_VISIBILITY_CONSTRAINT_BLOCKS>,
 }
 
-impl Iterator for BranchingConditionIdIterator<'_> {
-    type Item = ScopedBranchingConditionId;
+impl Iterator for VisibilityConstraintIdIterator<'_> {
+    type Item = ScopedVisibilityConstraintId;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.wrapped
             .next()
-            .map(ScopedBranchingConditionId::from_u32)
+            .map(ScopedVisibilityConstraintId::from_u32)
     }
 }
 
-impl std::iter::FusedIterator for BranchingConditionIdIterator<'_> {}
+impl std::iter::FusedIterator for VisibilityConstraintIdIterator<'_> {}
 
 #[derive(Clone)]
 pub(super) struct DeclarationIdIterator<'a> {
     inner: ReverseDeclarationsIterator<'a>,
-    branching_conditions: std::iter::Rev<BranchingConditionsIterator<'a>>,
+    visibility_constraints: std::iter::Rev<VisibilityConstraintsIterator<'a>>,
 }
 
 impl<'a> Iterator for DeclarationIdIterator<'a> {
-    type Item = (ScopedDefinitionId, BranchingConditionIdIterator<'a>);
+    type Item = (ScopedDefinitionId, VisibilityConstraintIdIterator<'a>);
 
     fn next(&mut self) -> Option<Self::Item> {
-        match (self.inner.next(), self.branching_conditions.next()) {
+        match (self.inner.next(), self.visibility_constraints.next()) {
             (None, None) => None,
-            (Some(declaration), Some(branching_conditions)) => Some((
+            (Some(declaration), Some(visibility_constraints)) => Some((
                 ScopedDefinitionId::from_u32(declaration),
-                BranchingConditionIdIterator {
-                    wrapped: branching_conditions.iter(),
+                VisibilityConstraintIdIterator {
+                    wrapped: visibility_constraints.iter(),
                 },
             )),
             // SAFETY: see above.
-            _ => unreachable!("declarations and branching_conditions length mismatch"),
+            _ => unreachable!("declarations and visibility_constraints length mismatch"),
         }
     }
 }
@@ -630,7 +630,7 @@ mod tests {
         let mut sym = SymbolState::undefined();
         sym.record_binding(
             ScopedDefinitionId::from_u32(0),
-            &BranchingConditions::default(),
+            &VisibilityConstraints::default(),
         );
 
         assert_bindings(&sym, false, &["0<>"]);
@@ -641,7 +641,7 @@ mod tests {
         let mut sym = SymbolState::undefined();
         sym.record_binding(
             ScopedDefinitionId::from_u32(0),
-            &BranchingConditions::default(),
+            &VisibilityConstraints::default(),
         );
         sym.set_may_be_unbound();
 
@@ -653,7 +653,7 @@ mod tests {
         let mut sym = SymbolState::undefined();
         sym.record_binding(
             ScopedDefinitionId::from_u32(0),
-            &BranchingConditions::default(),
+            &VisibilityConstraints::default(),
         );
         sym.record_constraint(ScopedConstraintId::from_u32(0));
 
@@ -666,14 +666,14 @@ mod tests {
         let mut sym0a = SymbolState::undefined();
         sym0a.record_binding(
             ScopedDefinitionId::from_u32(0),
-            &BranchingConditions::default(),
+            &VisibilityConstraints::default(),
         );
         sym0a.record_constraint(ScopedConstraintId::from_u32(0));
 
         let mut sym0b = SymbolState::undefined();
         sym0b.record_binding(
             ScopedDefinitionId::from_u32(0),
-            &BranchingConditions::default(),
+            &VisibilityConstraints::default(),
         );
         sym0b.record_constraint(ScopedConstraintId::from_u32(0));
 
@@ -685,14 +685,14 @@ mod tests {
         let mut sym1a = SymbolState::undefined();
         sym1a.record_binding(
             ScopedDefinitionId::from_u32(1),
-            &BranchingConditions::default(),
+            &VisibilityConstraints::default(),
         );
         sym1a.record_constraint(ScopedConstraintId::from_u32(1));
 
         let mut sym1b = SymbolState::undefined();
         sym1b.record_binding(
             ScopedDefinitionId::from_u32(1),
-            &BranchingConditions::default(),
+            &VisibilityConstraints::default(),
         );
         sym1b.record_constraint(ScopedConstraintId::from_u32(2));
 
@@ -704,7 +704,7 @@ mod tests {
         let mut sym2a = SymbolState::undefined();
         sym2a.record_binding(
             ScopedDefinitionId::from_u32(2),
-            &BranchingConditions::default(),
+            &VisibilityConstraints::default(),
         );
         sym2a.record_constraint(ScopedConstraintId::from_u32(3));
 
@@ -732,7 +732,7 @@ mod tests {
         let mut sym = SymbolState::undefined();
         sym.record_declaration(
             ScopedDefinitionId::from_u32(1),
-            &BranchingConditions::default(),
+            &VisibilityConstraints::default(),
         );
 
         assert_declarations(&sym, false, &[1]);
@@ -743,11 +743,11 @@ mod tests {
         let mut sym = SymbolState::undefined();
         sym.record_declaration(
             ScopedDefinitionId::from_u32(1),
-            &BranchingConditions::default(),
+            &VisibilityConstraints::default(),
         );
         sym.record_declaration(
             ScopedDefinitionId::from_u32(2),
-            &BranchingConditions::default(),
+            &VisibilityConstraints::default(),
         );
 
         assert_declarations(&sym, false, &[2]);
@@ -758,13 +758,13 @@ mod tests {
         let mut sym = SymbolState::undefined();
         sym.record_declaration(
             ScopedDefinitionId::from_u32(1),
-            &BranchingConditions::default(),
+            &VisibilityConstraints::default(),
         );
 
         let mut sym2 = SymbolState::undefined();
         sym2.record_declaration(
             ScopedDefinitionId::from_u32(2),
-            &BranchingConditions::default(),
+            &VisibilityConstraints::default(),
         );
 
         sym.merge(sym2);
@@ -777,7 +777,7 @@ mod tests {
         let mut sym = SymbolState::undefined();
         sym.record_declaration(
             ScopedDefinitionId::from_u32(1),
-            &BranchingConditions::default(),
+            &VisibilityConstraints::default(),
         );
 
         let sym2 = SymbolState::undefined();
@@ -792,7 +792,7 @@ mod tests {
         let mut sym = SymbolState::undefined();
         sym.record_declaration(
             ScopedDefinitionId::from_u32(0),
-            &BranchingConditions::default(),
+            &VisibilityConstraints::default(),
         );
         sym.set_may_be_undeclared();
 

@@ -1,8 +1,8 @@
 use crate::semantic_index::{
     ast_ids::HasScopedExpressionId,
-    branching_condition::BranchingCondition,
     constraint::{Constraint, ConstraintNode, PatternConstraintKind},
-    BranchingConditionsIterator,
+    visibility_constraint::VisibilityConstraint,
+    VisibilityConstraintIterator,
 };
 use crate::types::{infer_expression_types, Truthiness};
 use crate::Db;
@@ -20,7 +20,7 @@ use crate::Db;
 ///             d = 1
 /// ```
 ///
-/// Given an iterator over the branching conditions for each of these bindings, we would get:
+/// Given an iterator over the visibility constraints for each of these bindings, we would get:
 /// ```txt
 /// - a: {any_always_false: false, all_always_true: true,  at_least_one_condition: false}
 /// - b: {any_always_false: false, all_always_true: true,  at_least_one_condition: true}
@@ -29,29 +29,29 @@ use crate::Db;
 /// ```
 #[derive(Debug)]
 pub(crate) struct StaticTruthiness {
-    /// Is any of the branching conditions always false? (false if there are no conditions)
+    /// Is any of the visibility constraints always false? (false if there are no conditions)
     pub(crate) any_always_false: bool,
-    /// Are all of the branching conditions always true? (true if there are no conditions)
+    /// Are all of the visibility constraints always true? (true if there are no conditions)
     pub(crate) all_always_true: bool,
-    /// Is there at least one branching condition?
-    pub(crate) at_least_one_condition: bool,
+    /// Is there at least one visibility constraint?
+    pub(crate) at_least_one_constraint: bool,
 }
 
 impl StaticTruthiness {
-    /// Analyze the (statically known) truthiness for a list of branching conditions.
+    /// Analyze the (statically known) truthiness for a list of visibility constraints.
     pub(crate) fn analyze<'db>(
         db: &'db dyn Db,
-        branching_conditions: BranchingConditionsIterator<'_, 'db>,
+        visibility_constraints: VisibilityConstraintIterator<'_, 'db>,
     ) -> Self {
         let mut result = Self {
             any_always_false: false,
             all_always_true: true,
-            at_least_one_condition: false,
+            at_least_one_constraint: false,
         };
 
-        for condition in branching_conditions {
+        for condition in visibility_constraints {
             let truthiness = match condition {
-                BranchingCondition::ConditionalOn(Constraint {
+                VisibilityConstraint::Constraint(Constraint {
                     node: ConstraintNode::Expression(test_expr),
                     is_positive,
                 }) => {
@@ -62,7 +62,7 @@ impl StaticTruthiness {
 
                     ty.bool(db).negate_if(!is_positive)
                 }
-                BranchingCondition::ConditionalOn(Constraint {
+                VisibilityConstraint::Constraint(Constraint {
                     node: ConstraintNode::Pattern(inner),
                     ..
                 }) => match inner.kind(db) {
@@ -91,12 +91,12 @@ impl StaticTruthiness {
                         Truthiness::Ambiguous
                     }
                 },
-                BranchingCondition::Ambiguous => Truthiness::Ambiguous,
+                VisibilityConstraint::Ambiguous => Truthiness::Ambiguous,
             };
 
             result.any_always_false |= truthiness.is_always_false();
             result.all_always_true &= truthiness.is_always_true();
-            result.at_least_one_condition = true;
+            result.at_least_one_constraint = true;
         }
 
         result
@@ -106,16 +106,16 @@ impl StaticTruthiness {
     ///
     /// Note that the logical operations are exactly opposite to what one would expect from the names
     /// of the fields. The reason for this is that we want to draw conclusions like "this symbol can
-    /// not be bound because one of the branching conditions is always false". We can only draw this
+    /// not be bound because one of the visibility constraints is always false". We can only draw this
     /// conclusion if this is true in both control-flow paths. Similarly, we want to infer that the
-    /// binding of a symbol is unconditionally visible if all branching conditions are known to be
-    /// statically true. It is enough if this is the case for either of the two control-flow paths.
-    /// The other paths can not be taken if this is the case.
+    /// binding of a symbol is unconditionally visible if all constraints are known to be statically
+    /// true. It is enough if this is the case for either of the two control-flow paths. The other
+    /// paths can not be taken if this is the case.
     pub(crate) fn flow_merge(self, other: &Self) -> Self {
         Self {
             any_always_false: self.any_always_false && other.any_always_false,
             all_always_true: self.all_always_true || other.all_always_true,
-            at_least_one_condition: self.at_least_one_condition && other.at_least_one_condition,
+            at_least_one_constraint: self.at_least_one_constraint && other.at_least_one_constraint,
         }
     }
 
@@ -131,7 +131,7 @@ impl StaticTruthiness {
             // can not conclude that the symbol is bound.
             all_always_true: false,
             // Irrelevant for this analysis.
-            at_least_one_condition: false,
+            at_least_one_constraint: false,
         }
     }
 }

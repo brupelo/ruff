@@ -226,12 +226,12 @@ use self::symbol_state::{
     ScopedConstraintId, ScopedDefinitionId, SymbolBindings, SymbolDeclarations, SymbolState,
 };
 use crate::semantic_index::ast_ids::ScopedUseId;
-use crate::semantic_index::branching_condition::BranchingCondition;
 use crate::semantic_index::definition::Definition;
 use crate::semantic_index::symbol::ScopedSymbolId;
 use crate::semantic_index::use_def::symbol_state::{
-    BranchingConditionIdIterator, BranchingConditions, ScopedBranchingConditionId,
+    ScopedVisibilityConstraintId, VisibilityConstraintIdIterator, VisibilityConstraints,
 };
+use crate::semantic_index::visibility_constraint::VisibilityConstraint;
 use crate::symbol::Boundness;
 use crate::types::StaticTruthiness;
 use ruff_index::IndexVec;
@@ -251,8 +251,8 @@ pub(crate) struct UseDefMap<'db> {
     /// Array of [`Constraint`] in this scope.
     all_constraints: IndexVec<ScopedConstraintId, Constraint<'db>>,
 
-    /// Array of [`BranchingCondition`] in this scope.
-    all_branching_conditions: IndexVec<ScopedBranchingConditionId, BranchingCondition<'db>>,
+    /// Array of [`VisibilityConstraint`]s in this scope.
+    all_visibility_constraints: IndexVec<ScopedVisibilityConstraintId, VisibilityConstraint<'db>>,
 
     /// [`SymbolBindings`] reaching a [`ScopedUseId`].
     bindings_by_use: IndexVec<ScopedUseId, SymbolBindings>,
@@ -291,7 +291,7 @@ impl<'db> UseDefMap<'db> {
         let bindings = &self.bindings_by_use[use_id];
         let conditions_per_binding = self
             .bindings_iterator(bindings)
-            .map(|binding| binding.branching_conditions);
+            .map(|binding| binding.visibility_constraints);
         analyze_boundness(db, conditions_per_binding, bindings.may_be_unbound())
     }
 
@@ -310,7 +310,7 @@ impl<'db> UseDefMap<'db> {
         let bindings = self.public_symbols[symbol].bindings();
         let conditions = self
             .bindings_iterator(bindings)
-            .map(|binding| binding.branching_conditions);
+            .map(|binding| binding.visibility_constraints);
         analyze_boundness(db, conditions, bindings.may_be_unbound())
     }
 
@@ -354,7 +354,7 @@ impl<'db> UseDefMap<'db> {
         BindingWithConstraintsIterator {
             all_definitions: &self.all_definitions,
             all_constraints: &self.all_constraints,
-            all_branching_conditions: &self.all_branching_conditions,
+            all_visibility_constraints: &self.all_visibility_constraints,
             inner: bindings.iter_rev(),
         }
     }
@@ -365,7 +365,7 @@ impl<'db> UseDefMap<'db> {
     ) -> DeclarationsIterator<'a, 'db> {
         DeclarationsIterator {
             all_definitions: &self.all_definitions,
-            all_branching_conditions: &self.all_branching_conditions,
+            all_visibility_constraints: &self.all_visibility_constraints,
             inner: declarations.iter_rev(),
             may_be_undeclared: declarations.may_be_undeclared(),
         }
@@ -383,7 +383,8 @@ enum SymbolDefinitions {
 pub(crate) struct BindingWithConstraintsIterator<'map, 'db> {
     all_definitions: &'map IndexVec<ScopedDefinitionId, Definition<'db>>,
     all_constraints: &'map IndexVec<ScopedConstraintId, Constraint<'db>>,
-    all_branching_conditions: &'map IndexVec<ScopedBranchingConditionId, BranchingCondition<'db>>,
+    all_visibility_constraints:
+        &'map IndexVec<ScopedVisibilityConstraintId, VisibilityConstraint<'db>>,
     inner: BindingIdWithConstraintsIterator<'map>,
 }
 
@@ -397,9 +398,9 @@ impl<'map, 'db> Iterator for BindingWithConstraintsIterator<'map, 'db> {
                 all_constraints: self.all_constraints,
                 constraint_ids: binding.constraint_ids,
             },
-            branching_conditions: BranchingConditionsIterator {
-                all_branching_conditions: self.all_branching_conditions,
-                branching_condition_ids: binding.branching_conditions_ids,
+            visibility_constraints: VisibilityConstraintIterator {
+                all_visibility_constraints: self.all_visibility_constraints,
+                visibility_constraints_ids: binding.visibility_constraints_ids,
             },
         })
     }
@@ -410,7 +411,7 @@ impl std::iter::FusedIterator for BindingWithConstraintsIterator<'_, '_> {}
 pub(crate) struct BindingWithConstraints<'map, 'db> {
     pub(crate) binding: Definition<'db>,
     pub(crate) constraints: ConstraintsIterator<'map, 'db>,
-    pub(crate) branching_conditions: BranchingConditionsIterator<'map, 'db>,
+    pub(crate) visibility_constraints: VisibilityConstraintIterator<'map, 'db>,
 }
 
 pub(crate) struct ConstraintsIterator<'map, 'db> {
@@ -430,27 +431,31 @@ impl<'db> Iterator for ConstraintsIterator<'_, 'db> {
 
 impl std::iter::FusedIterator for ConstraintsIterator<'_, '_> {}
 
-pub(crate) struct BranchingConditionsIterator<'map, 'db> {
-    all_branching_conditions: &'map IndexVec<ScopedBranchingConditionId, BranchingCondition<'db>>,
-    branching_condition_ids: BranchingConditionIdIterator<'map>,
+pub(crate) struct VisibilityConstraintIterator<'map, 'db> {
+    all_visibility_constraints:
+        &'map IndexVec<ScopedVisibilityConstraintId, VisibilityConstraint<'db>>,
+    visibility_constraints_ids: VisibilityConstraintIdIterator<'map>,
 }
 
-impl<'db> Iterator for BranchingConditionsIterator<'_, 'db> {
-    type Item = BranchingCondition<'db>;
+impl<'db> Iterator for VisibilityConstraintIterator<'_, 'db> {
+    type Item = VisibilityConstraint<'db>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.branching_condition_ids
+        self.visibility_constraints_ids
             .next()
-            .map(|branching_condition_id| self.all_branching_conditions[branching_condition_id])
+            .map(|visibility_constraint_id| {
+                self.all_visibility_constraints[visibility_constraint_id]
+            })
     }
 }
 
-impl std::iter::FusedIterator for BranchingConditionsIterator<'_, '_> {}
+impl std::iter::FusedIterator for VisibilityConstraintIterator<'_, '_> {}
 
 #[derive(Clone)]
 pub(crate) struct DeclarationsIterator<'map, 'db> {
     all_definitions: &'map IndexVec<ScopedDefinitionId, Definition<'db>>,
-    all_branching_conditions: &'map IndexVec<ScopedBranchingConditionId, BranchingCondition<'db>>,
+    all_visibility_constraints:
+        &'map IndexVec<ScopedVisibilityConstraintId, VisibilityConstraint<'db>>,
     inner: DeclarationIdIterator<'map>,
     may_be_undeclared: bool,
 }
@@ -472,18 +477,20 @@ impl DeclarationsIterator<'_, '_> {
 }
 
 impl<'map, 'db> Iterator for DeclarationsIterator<'map, 'db> {
-    type Item = (Definition<'db>, BranchingConditionsIterator<'map, 'db>);
+    type Item = (Definition<'db>, VisibilityConstraintIterator<'map, 'db>);
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next().map(|(def_id, branching_condition_ids)| {
-            (
-                self.all_definitions[def_id],
-                BranchingConditionsIterator {
-                    all_branching_conditions: self.all_branching_conditions,
-                    branching_condition_ids,
-                },
-            )
-        })
+        self.inner
+            .next()
+            .map(|(def_id, visibility_constraints_ids)| {
+                (
+                    self.all_definitions[def_id],
+                    VisibilityConstraintIterator {
+                        all_visibility_constraints: self.all_visibility_constraints,
+                        visibility_constraints_ids,
+                    },
+                )
+            })
     }
 }
 
@@ -495,9 +502,9 @@ pub(super) struct FlowSnapshot {
     symbol_states: IndexVec<ScopedSymbolId, SymbolState>,
 }
 
-/// A snapshot of the active branching conditions at a particular point in control flow.
+/// A snapshot of the active visibility constraints at a particular point in control flow.
 #[derive(Clone, Debug)]
-pub(super) struct BranchingConditionsSnapshot(BranchingConditions);
+pub(super) struct VisibilityConstraintSnapshot(VisibilityConstraints);
 
 #[derive(Debug, Default)]
 pub(super) struct UseDefMapBuilder<'db> {
@@ -507,11 +514,11 @@ pub(super) struct UseDefMapBuilder<'db> {
     /// Append-only array of [`Constraint`].
     all_constraints: IndexVec<ScopedConstraintId, Constraint<'db>>,
 
-    /// Append-only array of [`BranchingCondition`].
-    all_branching_conditions: IndexVec<ScopedBranchingConditionId, BranchingCondition<'db>>,
+    /// Append-only array of [`VisibilityConstraint`].
+    all_visibility_constraints: IndexVec<ScopedVisibilityConstraintId, VisibilityConstraint<'db>>,
 
-    /// Active branching conditions.
-    active_branching_conditions: BranchingConditions,
+    /// TODO
+    active_visibility_constraints: VisibilityConstraints,
 
     /// Live bindings at each so-far-recorded use.
     bindings_by_use: IndexVec<ScopedUseId, SymbolBindings>,
@@ -536,7 +543,7 @@ impl<'db> UseDefMapBuilder<'db> {
             binding,
             SymbolDefinitions::Declarations(symbol_state.declarations().clone()),
         );
-        symbol_state.record_binding(def_id, &self.active_branching_conditions);
+        symbol_state.record_binding(def_id, &self.active_visibility_constraints);
     }
 
     pub(super) fn record_constraint(&mut self, constraint: Constraint<'db>) {
@@ -545,18 +552,18 @@ impl<'db> UseDefMapBuilder<'db> {
             state.record_constraint(constraint_id);
         }
 
-        self.record_branching_condition(BranchingCondition::ConditionalOn(constraint));
+        self.record_visibility_constraint(VisibilityConstraint::Constraint(constraint));
     }
 
     /// Marks a point in control-flow where we branch on a condition that we can not (or choose
     /// not to) analyze statically. Examples are `try` blocks or `for` loops.
     pub(super) fn record_ambiguous_branching(&mut self) {
-        self.record_branching_condition(BranchingCondition::Ambiguous);
+        self.record_visibility_constraint(VisibilityConstraint::Ambiguous);
     }
 
-    pub(super) fn record_branching_condition(&mut self, condition: BranchingCondition<'db>) {
-        let condition_id = self.all_branching_conditions.push(condition);
-        self.active_branching_conditions
+    pub(super) fn record_visibility_constraint(&mut self, condition: VisibilityConstraint<'db>) {
+        let condition_id = self.all_visibility_constraints.push(condition);
+        self.active_visibility_constraints
             .insert(condition_id.as_u32());
     }
 
@@ -571,7 +578,7 @@ impl<'db> UseDefMapBuilder<'db> {
             declaration,
             SymbolDefinitions::Bindings(symbol_state.bindings().clone()),
         );
-        symbol_state.record_declaration(def_id, &self.active_branching_conditions);
+        symbol_state.record_declaration(def_id, &self.active_visibility_constraints);
     }
 
     pub(super) fn record_declaration_and_binding(
@@ -582,8 +589,8 @@ impl<'db> UseDefMapBuilder<'db> {
         // We don't need to store anything in self.definitions_by_definition.
         let def_id = self.all_definitions.push(definition);
         let symbol_state = &mut self.symbol_states[symbol];
-        symbol_state.record_declaration(def_id, &self.active_branching_conditions);
-        symbol_state.record_binding(def_id, &self.active_branching_conditions);
+        symbol_state.record_declaration(def_id, &self.active_visibility_constraints);
+        symbol_state.record_binding(def_id, &self.active_visibility_constraints);
     }
 
     pub(super) fn record_use(&mut self, symbol: ScopedSymbolId, use_id: ScopedUseId) {
@@ -602,8 +609,8 @@ impl<'db> UseDefMapBuilder<'db> {
         }
     }
 
-    pub(super) fn branching_conditions_snapshot(&self) -> BranchingConditionsSnapshot {
-        BranchingConditionsSnapshot(self.active_branching_conditions.clone())
+    pub(super) fn visibility_constraints_snapshot(&self) -> VisibilityConstraintSnapshot {
+        VisibilityConstraintSnapshot(self.active_visibility_constraints.clone())
     }
 
     /// Restore the current builder symbols state to the given snapshot.
@@ -624,8 +631,11 @@ impl<'db> UseDefMapBuilder<'db> {
             .resize(num_symbols, SymbolState::undefined());
     }
 
-    pub(super) fn restore_branching_conditions(&mut self, snapshot: BranchingConditionsSnapshot) {
-        self.active_branching_conditions = snapshot.0;
+    pub(super) fn restore_visibility_constraints(
+        &mut self,
+        snapshot: VisibilityConstraintSnapshot,
+    ) {
+        self.active_visibility_constraints = snapshot.0;
     }
 
     /// Merge the given snapshot into the current state, reflecting that we might have taken either
@@ -659,7 +669,7 @@ impl<'db> UseDefMapBuilder<'db> {
         UseDefMap {
             all_definitions: self.all_definitions,
             all_constraints: self.all_constraints,
-            all_branching_conditions: self.all_branching_conditions,
+            all_visibility_constraints: self.all_visibility_constraints,
             bindings_by_use: self.bindings_by_use,
             public_symbols: self.symbol_states,
             definitions_by_definition: self.definitions_by_definition,
@@ -667,8 +677,8 @@ impl<'db> UseDefMapBuilder<'db> {
     }
 }
 
-/// Analyze the boundness (or declaredness) of a symbol based on all the branching conditions
-/// that were active for each of its bindings (or declarations).
+/// Analyze the boundness (or declaredness) of a symbol based on all the visibility constraints
+/// that affect each of its bindings (or declarations).
 ///
 /// Returns `None` if the symbol is definitely unbound.
 ///
@@ -711,7 +721,7 @@ fn analyze_boundness<'db, 'map, C>(
 ) -> Option<Boundness>
 where
     'db: 'map,
-    C: Iterator<Item = BranchingConditionsIterator<'map, 'db>>,
+    C: Iterator<Item = VisibilityConstraintIterator<'map, 'db>>,
 {
     let result = conditions_per_binding.fold(StaticTruthiness::no_bindings(), |r, conditions| {
         r.flow_merge(&StaticTruthiness::analyze(db, conditions))
