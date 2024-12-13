@@ -221,11 +221,11 @@
 //! snapshot, and merging a snapshot into the current state. The logic using these methods lives in
 //! [`SemanticIndexBuilder`](crate::semantic_index::builder::SemanticIndexBuilder), e.g. where it
 //! visits a `StmtIf` node.
-pub(crate) use self::symbol_state::ScopedConstraintId;
 use self::symbol_state::{
     BindingIdWithConstraintsIterator, ConstraintIdIterator, DeclarationIdIterator,
     ScopedDefinitionId, SymbolBindings, SymbolDeclarations, SymbolState,
 };
+pub(crate) use self::symbol_state::{ScopedConstraintId, ScopedVisibilityConstraintId};
 use crate::semantic_index::ast_ids::ScopedUseId;
 use crate::semantic_index::definition::Definition;
 use crate::semantic_index::symbol::ScopedSymbolId;
@@ -248,6 +248,9 @@ pub(crate) struct UseDefMap<'db> {
 
     /// Array of [`Constraint`] in this scope.
     all_constraints: IndexVec<ScopedConstraintId, Constraint<'db>>,
+
+    /// Array of [`VisibilityConstraintRef`] in this scope.
+    all_visibility_constraints: IndexVec<ScopedVisibilityConstraintId, VisibilityConstraintRef>,
 
     /// [`SymbolBindings`] reaching a [`ScopedUseId`].
     bindings_by_use: IndexVec<ScopedUseId, SymbolBindings>,
@@ -346,16 +349,10 @@ impl<'db> UseDefMap<'db> {
         &'map self,
         bindings: &'map SymbolBindings,
     ) -> BindingWithConstraintsIterator<'map, 'db> {
-        let all_definitions: &'map IndexVec<ScopedDefinitionId, Definition<'db>> =
-            &self.all_definitions;
-        let all_constraints: &'map IndexVec<ScopedConstraintId, Constraint<'db>> =
-            &self.all_constraints;
-        let inner = bindings.iter(&self.all_constraints);
-
         BindingWithConstraintsIterator {
-            all_definitions,
-            all_constraints,
-            inner,
+            all_definitions: &self.all_definitions,
+            all_constraints: &self.all_constraints,
+            inner: bindings.iter(&self.all_constraints, &self.all_visibility_constraints),
         }
     }
 
@@ -363,14 +360,12 @@ impl<'db> UseDefMap<'db> {
         &'map self,
         declarations: &'map SymbolDeclarations,
     ) -> DeclarationsIterator<'map, 'db> {
-        let all_constraints: &'map IndexVec<ScopedConstraintId, Constraint<'db>> =
-            &self.all_constraints;
-
         DeclarationsIterator {
             all_definitions: &self.all_definitions,
             inner: {
                 DeclarationIdIterator {
-                    all_constraints,
+                    all_constraints: &self.all_constraints,
+                    all_visibility_constraints: &self.all_visibility_constraints,
                     inner: declarations.live_declarations.iter(),
                     visibility_constraints: declarations.visibility_constraints.iter(),
                 }
@@ -485,13 +480,16 @@ pub(super) struct FlowSnapshot {
     symbol_states: IndexVec<ScopedSymbolId, SymbolState>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(super) struct UseDefMapBuilder<'db> {
     /// Append-only array of [`Definition`].
     all_definitions: IndexVec<ScopedDefinitionId, Definition<'db>>,
 
     /// Append-only array of [`Constraint`].
     all_constraints: IndexVec<ScopedConstraintId, Constraint<'db>>,
+
+    /// Append-only array of [`VisibilityConstraintRef`].
+    all_visibility_constraints: IndexVec<ScopedVisibilityConstraintId, VisibilityConstraintRef>,
 
     /// Live bindings at each so-far-recorded use.
     bindings_by_use: IndexVec<ScopedUseId, SymbolBindings>,
@@ -504,6 +502,17 @@ pub(super) struct UseDefMapBuilder<'db> {
 }
 
 impl<'db> UseDefMapBuilder<'db> {
+    pub(super) fn new() -> Self {
+        Self {
+            all_definitions: IndexVec::new(),
+            all_constraints: IndexVec::new(),
+            all_visibility_constraints: IndexVec::from_iter([VisibilityConstraintRef::None]),
+            bindings_by_use: IndexVec::new(),
+            definitions_by_definition: FxHashMap::default(),
+            symbol_states: IndexVec::new(),
+        }
+    }
+
     pub(super) fn add_symbol(&mut self, symbol: ScopedSymbolId) {
         let new_symbol = self.symbol_states.push(SymbolState::undefined());
         debug_assert_eq!(symbol, new_symbol);
@@ -528,8 +537,12 @@ impl<'db> UseDefMapBuilder<'db> {
     }
 
     pub(super) fn record_visibility_constraint(&mut self, constraint: &VisibilityConstraintRef) {
+        let new_constraint_id = self.all_visibility_constraints.push(constraint.clone());
         for state in &mut self.symbol_states {
-            state.record_visibility_constraint(constraint);
+            state.record_visibility_constraint(
+                &mut self.all_visibility_constraints,
+                new_constraint_id,
+            );
         }
     }
 
@@ -624,6 +637,7 @@ impl<'db> UseDefMapBuilder<'db> {
         UseDefMap {
             all_definitions: self.all_definitions,
             all_constraints: self.all_constraints,
+            all_visibility_constraints: self.all_visibility_constraints,
             bindings_by_use: self.bindings_by_use,
             public_symbols: self.symbol_states,
             definitions_by_definition: self.definitions_by_definition,

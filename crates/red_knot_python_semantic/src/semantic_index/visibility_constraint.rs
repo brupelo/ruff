@@ -1,6 +1,6 @@
 use ruff_index::IndexVec;
 
-use crate::semantic_index::use_def::ScopedConstraintId;
+use crate::semantic_index::use_def::{ScopedConstraintId, ScopedVisibilityConstraintId};
 
 use super::constraint::Constraint;
 
@@ -32,8 +32,8 @@ use super::constraint::Constraint;
 pub(crate) enum VisibilityConstraintRef {
     None,
     Single(ScopedConstraintId),
-    And(Box<VisibilityConstraintRef>, Box<VisibilityConstraintRef>),
-    Or(Box<VisibilityConstraintRef>, Box<VisibilityConstraintRef>),
+    And(ScopedVisibilityConstraintId, ScopedVisibilityConstraintId),
+    Or(ScopedVisibilityConstraintId, ScopedVisibilityConstraintId),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -53,21 +53,25 @@ pub(crate) enum VisibilityConstraint<'db> {
 impl<'db> VisibilityConstraint<'db> {
     pub(crate) fn from_ref<'map>(
         all_constraints: &'map IndexVec<ScopedConstraintId, Constraint<'db>>,
-        visibility_constraint_ref: &'map VisibilityConstraintRef,
+        all_visibility_constraints: &'map IndexVec<
+            ScopedVisibilityConstraintId,
+            VisibilityConstraintRef,
+        >,
+        visibility_constraint_id: ScopedVisibilityConstraintId,
     ) -> VisibilityConstraint<'db> {
-        match visibility_constraint_ref {
+        match &all_visibility_constraints[visibility_constraint_id] {
             VisibilityConstraintRef::None => VisibilityConstraint::None,
             VisibilityConstraintRef::Single(id) => {
                 VisibilityConstraint::Single(all_constraints[*id])
             }
             VisibilityConstraintRef::And(left, right) => {
-                let left = Self::from_ref(all_constraints, left);
-                let right = Self::from_ref(all_constraints, right);
+                let left = Self::from_ref(all_constraints, &all_visibility_constraints, *left);
+                let right = Self::from_ref(all_constraints, all_visibility_constraints, *right);
                 VisibilityConstraint::And(Box::new(left), Box::new(right))
             }
             VisibilityConstraintRef::Or(left, right) => {
-                let left = Self::from_ref(all_constraints, left);
-                let right = Self::from_ref(all_constraints, right);
+                let left = Self::from_ref(all_constraints, all_visibility_constraints, *left);
+                let right = Self::from_ref(all_constraints, all_visibility_constraints, *right);
                 VisibilityConstraint::Or(Box::new(left), Box::new(right))
             }
         }
