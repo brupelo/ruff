@@ -307,6 +307,13 @@ pub fn check(args: CheckCommand, global_options: GlobalConfigArgs) -> Result<Exi
         printer_flags |= PrinterFlags::SHOW_FIX_SUMMARY;
     }
 
+    if std::env::var("RUFF_SHOW_FULL_PATH")
+        .map(|val| matches!(val.to_lowercase().as_str(), "1" | "true" | "yes"))
+        .unwrap_or(false)
+    {
+        printer_flags |= PrinterFlags::SHOW_FULL_PATH;
+    }
+
     #[cfg(debug_assertions)]
     if cache {
         // `--no-cache` doesn't respect code changes, and so is often confusing during
